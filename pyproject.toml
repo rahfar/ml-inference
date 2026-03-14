@@ -1,0 +1,17 @@
+[project]
+name = "ml-inference"
+version = "0.1.0"
+description = "ML inference benchmark: CatBoost vs PyTorch, FastAPI vs Flask"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "catboost",
+    "torch",
+    "numpy",
+    "fastapi",
+    "uvicorn[standard]",
+    "flask",
+    "waitress",
+    "psutil",
+    "httpx",
+]
