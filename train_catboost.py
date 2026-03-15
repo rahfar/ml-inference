@@ -10,10 +10,9 @@ N = 20_000
 X = np.random.randn(N, 3).astype(np.float32)
 y = (X[:, 0] * 2.0 + X[:, 1] - X[:, 2] + np.random.randn(N) * 0.1).astype(np.float32)
 
-# depth=6, 800 trees → ~1 MB
 model = CatBoostRegressor(
-    iterations=800,
-    depth=6,
+    iterations=50,
+    depth=7,
     learning_rate=0.1,
     loss_function="RMSE",
     verbose=100,
