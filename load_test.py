@@ -16,14 +16,18 @@ import sys
 import threading
 import time
 
+import grpc
 import httpx
 import psutil
+
+import inference_pb2
+import inference_pb2_grpc
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="ML inference load test")
-parser.add_argument("--server", choices=["fastapi", "flask", "all"], default="all")
+parser.add_argument("--server", choices=["fastapi", "flask", "grpc", "all"], default="all")
 parser.add_argument("--model", choices=["catboost", "pytorch", "all"], default="all")
 parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", type=int, default=8000)
@@ -40,7 +44,8 @@ PAYLOAD = {"x1": 1.0, "x2": 2.0, "x3": 3.0}
 # Server lifecycle
 # ---------------------------------------------------------------------------
 def start_server(server: str, model: str, host: str, port: int) -> subprocess.Popen:
-    script = "server_fastapi.py" if server == "fastapi" else "server_flask.py"
+    scripts = {"fastapi": "server_fastapi.py", "flask": "server_flask.py", "grpc": "server_grpc.py"}
+    script = scripts[server]
     cmd = [
         sys.executable,
         script,
@@ -67,6 +72,19 @@ def wait_ready(url: str, timeout: float = 30.0):
         except Exception:
             time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not become ready within {timeout}s")
+
+
+def wait_ready_grpc(host: str, port: int, timeout: float = 30.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with grpc.insecure_channel(f"{host}:{port}") as channel:
+                stub = inference_pb2_grpc.InferenceStub(channel)
+                stub.Health(inference_pb2.HealthRequest(), timeout=1.0)
+                return
+        except Exception:
+            time.sleep(0.2)
+    raise TimeoutError(f"gRPC server at {host}:{port} did not become ready within {timeout}s")
 
 
 def stop_server(proc: subprocess.Popen):
@@ -100,7 +118,7 @@ def monitor_process(
 
 
 # ---------------------------------------------------------------------------
-# Async load generator
+# Async load generators
 # ---------------------------------------------------------------------------
 async def load(url: str, concurrency: int, duration: float):
     latencies: list[float] = []
@@ -125,6 +143,34 @@ async def load(url: str, concurrency: int, duration: float):
     return latencies, errors, elapsed
 
 
+async def load_grpc(host: str, port: int, concurrency: int, duration: float):
+    import grpc.aio
+
+    latencies: list[float] = []
+    errors = 0
+    start = time.monotonic()
+    request = inference_pb2.PredictRequest(x1=1.0, x2=2.0, x3=3.0)
+
+    async with grpc.aio.insecure_channel(f"{host}:{port}") as channel:
+        stub = inference_pb2_grpc.InferenceStub(channel)
+
+        async def worker():
+            nonlocal errors
+            while time.monotonic() - start < duration:
+                t0 = time.monotonic()
+                try:
+                    await stub.Predict(request)
+                    latencies.append(time.monotonic() - t0)
+                except Exception:
+                    errors += 1
+
+        tasks = [asyncio.create_task(worker()) for _ in range(concurrency)]
+        await asyncio.gather(*tasks)
+        elapsed = time.monotonic() - start
+
+    return latencies, errors, elapsed
+
+
 # ---------------------------------------------------------------------------
 # Single benchmark run
 # ---------------------------------------------------------------------------
@@ -141,7 +187,10 @@ def run_benchmark(server: str, model: str) -> dict:
     proc = start_server(server, model, host, port)
     try:
         print("  Starting server...", end=" ", flush=True)
-        wait_ready(url)
+        if server == "grpc":
+            wait_ready_grpc(host, port)
+        else:
+            wait_ready(url)
         print("ready.")
 
         # monitor the server process
@@ -155,9 +204,14 @@ def run_benchmark(server: str, model: str) -> dict:
         mon.start()
 
         print(f"  Running load test...", end=" ", flush=True)
-        latencies, errors, elapsed = asyncio.run(
-            load(url, args.concurrency, args.duration)
-        )
+        if server == "grpc":
+            latencies, errors, elapsed = asyncio.run(
+                load_grpc(host, port, args.concurrency, args.duration)
+            )
+        else:
+            latencies, errors, elapsed = asyncio.run(
+                load(url, args.concurrency, args.duration)
+            )
         stop_evt.set()
         mon.join(timeout=3)
         print("done.")
@@ -246,7 +300,7 @@ def _print_summary(results: list[dict]):
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    servers = ["fastapi", "flask"] if args.server == "all" else [args.server]
+    servers = ["fastapi", "flask", "grpc"] if args.server == "all" else [args.server]
     models = ["catboost", "pytorch"] if args.model == "all" else [args.model]
 
     results = []

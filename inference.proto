@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package inference;
+
+service Inference {
+  rpc Predict (PredictRequest) returns (PredictResponse);
+  rpc Health  (HealthRequest)  returns (HealthResponse);
+}
+
+message PredictRequest {
+  float x1 = 1;
+  float x2 = 2;
+  float x3 = 3;
+}
+
+message PredictResponse {
+  float prediction = 1;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string model  = 2;
+}
