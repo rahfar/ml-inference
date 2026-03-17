@@ -1,21 +1,22 @@
 """FastAPI (ASGI) inference server.
 
 Usage:
-    python server_fastapi.py --model catboost
-    python server_fastapi.py --model pytorch
+    python server_fastapi.py
+    python server_fastapi.py --port 8001
 """
 import argparse
-import sys
+
 import numpy as np
+import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
-import uvicorn
+
+from model_def import HISTORY_STEPS, VesselTrackPredictor
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="FastAPI inference server")
-parser.add_argument("--model", choices=["catboost", "pytorch"], required=True)
 parser.add_argument("--host", default="0.0.0.0")
 parser.add_argument("--port", type=int, default=8000)
 args = parser.parse_args()
@@ -23,51 +24,54 @@ args = parser.parse_args()
 # ---------------------------------------------------------------------------
 # Model loading
 # ---------------------------------------------------------------------------
-if args.model == "catboost":
-    from catboost import CatBoostRegressor
+_model = VesselTrackPredictor()
+_model.load_state_dict(torch.load("models/pytorch_model.pt", weights_only=True))
+_model.eval()
 
-    _cb_model = CatBoostRegressor()
-    _cb_model.load_model("models/catboost_model.cbm")
 
-    def _predict(x1: float, x2: float, x3: float) -> float:
-        X = np.array([[x1, x2, x3]], dtype=np.float32)
-        return float(_cb_model.predict(X)[0])
+def _predict(history: np.ndarray) -> list[list[float]]:
+    """history: (30, 5) → [[lat, lon], ...] × 15"""
+    with torch.no_grad():
+        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0)  # (1, 30, 5)
+        return _model(x).squeeze(0).tolist()  # (15, 2)
 
-else:
-    import torch
-    from model_def import MLP
-
-    _pt_model = MLP()
-    _pt_model.load_state_dict(torch.load("models/pytorch_model.pt", weights_only=True))
-    _pt_model.eval()
-
-    def _predict(x1: float, x2: float, x3: float) -> float:
-        with torch.no_grad():
-            x = torch.tensor([[x1, x2, x3]], dtype=torch.float32)
-            return float(_pt_model(x).item())
 
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="ML Inference", version="1.0")
+app = FastAPI(title="Vessel Track Inference", version="1.0")
 
 
-class Features(BaseModel):
-    x1: float
-    x2: float
-    x3: float
+class TrackPoint(BaseModel):
+    lat: float
+    lon: float
+    speed: float
+    course_sin: float
+    course_cos: float
+
+
+class PredictRequest(BaseModel):
+    history: list[TrackPoint]  # expected length: HISTORY_STEPS
+
+
+class PredictResponse(BaseModel):
+    prediction: list[list[float]]  # 15 × [lat, lon]
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": args.model}
+    return {"status": "ok"}
 
 
-@app.post("/predict")
-def predict(features: Features):
-    result = _predict(features.x1, features.x2, features.x3)
-    return {"prediction": result}
+@app.post("/predict", response_model=PredictResponse)
+def predict(req: PredictRequest):
+    x = np.array(
+        [[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in req.history],
+        dtype=np.float32,
+    )
+    return PredictResponse(prediction=_predict(x))
 
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

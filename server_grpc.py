@@ -1,23 +1,24 @@
 """gRPC inference server.
 
 Usage:
-    python server_grpc.py --model catboost
-    python server_grpc.py --model pytorch
+    python server_grpc.py
+    python server_grpc.py --port 8001
 """
 import argparse
 import concurrent.futures
 
 import grpc
 import numpy as np
+import torch
 
 import inference_pb2
 import inference_pb2_grpc
+from model_def import VesselTrackPredictor
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="gRPC inference server")
-parser.add_argument("--model", choices=["catboost", "pytorch"], required=True)
 parser.add_argument("--host", default="0.0.0.0")
 parser.add_argument("--port", type=int, default=8000)
 args = parser.parse_args()
@@ -25,28 +26,16 @@ args = parser.parse_args()
 # ---------------------------------------------------------------------------
 # Model loading
 # ---------------------------------------------------------------------------
-if args.model == "catboost":
-    from catboost import CatBoostRegressor
+_model = VesselTrackPredictor()
+_model.load_state_dict(torch.load("models/pytorch_model.pt", weights_only=True))
+_model.eval()
 
-    _cb_model = CatBoostRegressor()
-    _cb_model.load_model("models/catboost_model.cbm")
 
-    def _predict(x1: float, x2: float, x3: float) -> float:
-        X = np.array([[x1, x2, x3]], dtype=np.float32)
-        return float(_cb_model.predict(X)[0])
-
-else:
-    import torch
-    from model_def import MLP
-
-    _pt_model = MLP()
-    _pt_model.load_state_dict(torch.load("models/pytorch_model.pt", weights_only=True))
-    _pt_model.eval()
-
-    def _predict(x1: float, x2: float, x3: float) -> float:
-        with torch.no_grad():
-            x = torch.tensor([[x1, x2, x3]], dtype=torch.float32)
-            return float(_pt_model(x).item())
+def _predict(history: np.ndarray) -> list[list[float]]:
+    """history: (30, 5) → [[lat, lon], ...] × 15"""
+    with torch.no_grad():
+        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0)  # (1, 30, 5)
+        return _model(x).squeeze(0).tolist()  # (15, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -54,11 +43,20 @@ else:
 # ---------------------------------------------------------------------------
 class InferenceServicer(inference_pb2_grpc.InferenceServicer):
     def Predict(self, request, context):
-        result = _predict(request.x1, request.x2, request.x3)
-        return inference_pb2.PredictResponse(prediction=result)
+        history = np.array(
+            [[p.lat, p.lon, p.speed, p.course_sin, p.course_cos]
+             for p in request.history],
+            dtype=np.float32,
+        )
+        result = _predict(history)
+        return inference_pb2.PredictResponse(
+            prediction=[
+                inference_pb2.FuturePoint(lat=pt[0], lon=pt[1]) for pt in result
+            ]
+        )
 
     def Health(self, request, context):
-        return inference_pb2.HealthResponse(status="ok", model=args.model)
+        return inference_pb2.HealthResponse(status="ok")
 
 
 # ---------------------------------------------------------------------------
@@ -69,5 +67,5 @@ if __name__ == "__main__":
     inference_pb2_grpc.add_InferenceServicer_to_server(InferenceServicer(), server)
     server.add_insecure_port(f"{args.host}:{args.port}")
     server.start()
-    print(f"Serving gRPC on {args.host}:{args.port} model={args.model}")
+    print(f"Serving gRPC on {args.host}:{args.port}")
     server.wait_for_termination()

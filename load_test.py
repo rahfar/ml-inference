@@ -1,15 +1,13 @@
 """Load test: measures RPS, latency percentiles, memory and CPU of the server process.
 
 Usage:
-    python load_test.py --server fastapi --model catboost
-    python load_test.py --server flask   --model pytorch
-    python load_test.py --server all     --model all      # full benchmark matrix
+    python load_test.py --server fastapi
+    python load_test.py --server grpc
+    python load_test.py --server all    # full benchmark matrix
 """
 
 import argparse
 import asyncio
-import os
-import signal
 import statistics
 import subprocess
 import sys
@@ -22,49 +20,48 @@ import psutil
 
 import inference_pb2
 import inference_pb2_grpc
+from model_def import HISTORY_STEPS
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="ML inference load test")
+parser = argparse.ArgumentParser(description="Vessel track inference load test")
 parser.add_argument("--server", choices=["fastapi", "flask", "grpc", "all"], default="all")
-parser.add_argument("--model", choices=["catboost", "pytorch", "all"], default="all")
 parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--duration", type=int, default=20, help="Test duration in seconds")
-parser.add_argument(
-    "--concurrency", type=int, default=10, help="Concurrent async workers"
-)
+parser.add_argument("--concurrency", type=int, default=10, help="Concurrent async workers")
 args = parser.parse_args()
 
-PAYLOAD = {"x1": 1.0, "x2": 2.0, "x3": 3.0}
+# Fixed test payload: 30 track points
+_TRACK = [
+    {"lat": 58.0 + i * 0.001, "lon": 10.0, "speed": 12.0, "course_sin": 0.5, "course_cos": 0.866}
+    for i in range(HISTORY_STEPS)
+]
+HTTP_PAYLOAD = {"history": _TRACK}
+GRPC_REQUEST = inference_pb2.PredictRequest(
+    history=[
+        inference_pb2.TrackPoint(
+            lat=p["lat"], lon=p["lon"], speed=p["speed"],
+            course_sin=p["course_sin"], course_cos=p["course_cos"],
+        )
+        for p in _TRACK
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
 # Server lifecycle
 # ---------------------------------------------------------------------------
-def start_server(server: str, model: str, host: str, port: int) -> subprocess.Popen:
+def start_server(server: str, host: str, port: int) -> subprocess.Popen:
     scripts = {"fastapi": "server_fastapi.py", "flask": "server_flask.py", "grpc": "server_grpc.py"}
-    script = scripts[server]
-    cmd = [
-        sys.executable,
-        script,
-        "--model",
-        model,
-        "--host",
-        host,
-        "--port",
-        str(port),
-    ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return proc
+    cmd = [sys.executable, scripts[server], "--host", host, "--port", str(port)]
+    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def wait_ready(url: str, timeout: float = 30.0):
-    deadline = time.monotonic() + timeout
-    import urllib.error
     import urllib.request
-
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             urllib.request.urlopen(f"{url}/health", timeout=1)
@@ -96,14 +93,12 @@ def stop_server(proc: subprocess.Popen):
 
 
 # ---------------------------------------------------------------------------
-# Process monitor (runs in background thread)
+# Process monitor (background thread)
 # ---------------------------------------------------------------------------
-def monitor_process(
-    pid: int, interval: float, stop_event: threading.Event, samples: list
-):
+def monitor_process(pid: int, interval: float, stop_event: threading.Event, samples: list):
     try:
         proc = psutil.Process(pid)
-        proc.cpu_percent()  # first call initialises
+        proc.cpu_percent()  # first call initialises the counter
         time.sleep(interval)
         while not stop_event.is_set():
             try:
@@ -120,7 +115,7 @@ def monitor_process(
 # ---------------------------------------------------------------------------
 # Async load generators
 # ---------------------------------------------------------------------------
-async def load(url: str, concurrency: int, duration: float):
+async def load_http(url: str, concurrency: int, duration: float):
     latencies: list[float] = []
     errors = 0
     start = time.monotonic()
@@ -131,16 +126,14 @@ async def load(url: str, concurrency: int, duration: float):
             while time.monotonic() - start < duration:
                 t0 = time.monotonic()
                 try:
-                    resp = await client.post(f"{url}/predict", json=PAYLOAD)
+                    resp = await client.post(f"{url}/predict", json=HTTP_PAYLOAD)
                     resp.raise_for_status()
                     latencies.append(time.monotonic() - t0)
                 except Exception:
                     errors += 1
 
-    tasks = [asyncio.create_task(worker()) for _ in range(concurrency)]
-    await asyncio.gather(*tasks)
-    elapsed = time.monotonic() - start
-    return latencies, errors, elapsed
+    await asyncio.gather(*[asyncio.create_task(worker()) for _ in range(concurrency)])
+    return latencies, errors, time.monotonic() - start
 
 
 async def load_grpc(host: str, port: int, concurrency: int, duration: float):
@@ -149,7 +142,6 @@ async def load_grpc(host: str, port: int, concurrency: int, duration: float):
     latencies: list[float] = []
     errors = 0
     start = time.monotonic()
-    request = inference_pb2.PredictRequest(x1=1.0, x2=2.0, x3=3.0)
 
     async with grpc.aio.insecure_channel(f"{host}:{port}") as channel:
         stub = inference_pb2_grpc.InferenceStub(channel)
@@ -159,13 +151,12 @@ async def load_grpc(host: str, port: int, concurrency: int, duration: float):
             while time.monotonic() - start < duration:
                 t0 = time.monotonic()
                 try:
-                    await stub.Predict(request)
+                    await stub.Predict(GRPC_REQUEST)
                     latencies.append(time.monotonic() - t0)
                 except Exception:
                     errors += 1
 
-        tasks = [asyncio.create_task(worker()) for _ in range(concurrency)]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*[asyncio.create_task(worker()) for _ in range(concurrency)])
         elapsed = time.monotonic() - start
 
     return latencies, errors, elapsed
@@ -174,17 +165,17 @@ async def load_grpc(host: str, port: int, concurrency: int, duration: float):
 # ---------------------------------------------------------------------------
 # Single benchmark run
 # ---------------------------------------------------------------------------
-def run_benchmark(server: str, model: str) -> dict:
+def run_benchmark(server: str) -> dict:
     host = args.host
     port = args.port
-    url = f"http://{host}:{port}"
+    url  = f"http://{host}:{port}"
 
     print(f"\n{'=' * 60}")
-    print(f"  Server={server.upper()}  Model={model.upper()}")
+    print(f"  Server={server.upper()}")
     print(f"  Duration={args.duration}s  Concurrency={args.concurrency}")
     print(f"{'=' * 60}")
 
-    proc = start_server(server, model, host, port)
+    proc = start_server(server, host, port)
     try:
         print("  Starting server...", end=" ", flush=True)
         if server == "grpc":
@@ -193,24 +184,21 @@ def run_benchmark(server: str, model: str) -> dict:
             wait_ready(url)
         print("ready.")
 
-        # monitor the server process
         samples: list[tuple[float, float]] = []
         stop_evt = threading.Event()
         mon = threading.Thread(
-            target=monitor_process,
-            args=(proc.pid, 0.5, stop_evt, samples),
-            daemon=True,
+            target=monitor_process, args=(proc.pid, 0.5, stop_evt, samples), daemon=True
         )
         mon.start()
 
-        print(f"  Running load test...", end=" ", flush=True)
+        print("  Running load test...", end=" ", flush=True)
         if server == "grpc":
             latencies, errors, elapsed = asyncio.run(
                 load_grpc(host, port, args.concurrency, args.duration)
             )
         else:
             latencies, errors, elapsed = asyncio.run(
-                load(url, args.concurrency, args.duration)
+                load_http(url, args.concurrency, args.duration)
             )
         stop_evt.set()
         mon.join(timeout=3)
@@ -222,56 +210,41 @@ def run_benchmark(server: str, model: str) -> dict:
     # -----------------------------------------------------------------------
     # Compute stats
     # -----------------------------------------------------------------------
-    n = len(latencies)
+    n   = len(latencies)
     rps = n / elapsed if elapsed > 0 else 0
 
-    lat_ms = [l * 1000 for l in latencies]
+    lat_ms = sorted(l * 1000 for l in latencies)
     if lat_ms:
-        lat_ms_sorted = sorted(lat_ms)
-        p50 = statistics.median(lat_ms_sorted)
-        p95 = lat_ms_sorted[int(len(lat_ms_sorted) * 0.95)]
-        p99 = lat_ms_sorted[int(len(lat_ms_sorted) * 0.99)]
-        avg_lat = statistics.mean(lat_ms_sorted)
-        max_lat = max(lat_ms_sorted)
+        p50     = statistics.median(lat_ms)
+        p95     = lat_ms[int(len(lat_ms) * 0.95)]
+        p99     = lat_ms[int(len(lat_ms) * 0.99)]
+        avg_lat = statistics.mean(lat_ms)
+        max_lat = lat_ms[-1]
     else:
         p50 = p95 = p99 = avg_lat = max_lat = float("nan")
 
     mem_vals = [s[0] for s in samples]
     cpu_vals = [s[1] for s in samples]
-    avg_mem = statistics.mean(mem_vals) if mem_vals else float("nan")
-    max_mem = max(mem_vals) if mem_vals else float("nan")
-    avg_cpu = statistics.mean(cpu_vals) if cpu_vals else float("nan")
-    max_cpu = max(cpu_vals) if cpu_vals else float("nan")
+    avg_mem  = statistics.mean(mem_vals) if mem_vals else float("nan")
+    max_mem  = max(mem_vals)             if mem_vals else float("nan")
+    avg_cpu  = statistics.mean(cpu_vals) if cpu_vals else float("nan")
+    max_cpu  = max(cpu_vals)             if cpu_vals else float("nan")
 
     result = dict(
         server=server,
-        model=model,
-        requests=n,
-        errors=errors,
-        elapsed=elapsed,
-        rps=rps,
-        lat_avg_ms=avg_lat,
-        lat_p50_ms=p50,
-        lat_p95_ms=p95,
-        lat_p99_ms=p99,
-        lat_max_ms=max_lat,
-        mem_avg_mb=avg_mem,
-        mem_max_mb=max_mem,
-        cpu_avg_pct=avg_cpu,
-        cpu_max_pct=max_cpu,
+        requests=n, errors=errors, elapsed=elapsed, rps=rps,
+        lat_avg_ms=avg_lat, lat_p50_ms=p50, lat_p95_ms=p95,
+        lat_p99_ms=p99, lat_max_ms=max_lat,
+        mem_avg_mb=avg_mem, mem_max_mb=max_mem,
+        cpu_avg_pct=avg_cpu, cpu_max_pct=max_cpu,
     )
-
     _print_result(result)
     return result
 
 
 def _print_result(r: dict):
-    print(
-        f"\n  Throughput : {r['rps']:.1f} req/s  ({r['requests']} requests, {r['errors']} errors)"
-    )
-    print(
-        f"  Latency    : avg={r['lat_avg_ms']:.2f}ms  p50={r['lat_p50_ms']:.2f}ms  p95={r['lat_p95_ms']:.2f}ms  p99={r['lat_p99_ms']:.2f}ms  max={r['lat_max_ms']:.2f}ms"
-    )
+    print(f"\n  Throughput : {r['rps']:.1f} req/s  ({r['requests']} requests, {r['errors']} errors)")
+    print(f"  Latency    : avg={r['lat_avg_ms']:.2f}ms  p50={r['lat_p50_ms']:.2f}ms  p95={r['lat_p95_ms']:.2f}ms  p99={r['lat_p99_ms']:.2f}ms  max={r['lat_max_ms']:.2f}ms")
     print(f"  Memory     : avg={r['mem_avg_mb']:.1f}MB  max={r['mem_max_mb']:.1f}MB")
     print(f"  CPU        : avg={r['cpu_avg_pct']:.1f}%   max={r['cpu_max_pct']:.1f}%")
 
@@ -283,12 +256,12 @@ def _print_summary(results: list[dict]):
     print(f"\n{'=' * 60}")
     print("  SUMMARY")
     print(f"{'=' * 60}")
-    hdr = f"{'Server':<10} {'Model':<10} {'RPS':>8} {'p50 ms':>8} {'p95 ms':>8} {'MemMB':>8} {'CPU%':>7}"
+    hdr = f"{'Server':<10} {'RPS':>8} {'p50 ms':>8} {'p95 ms':>8} {'MemMB':>8} {'CPU%':>7}"
     print(f"  {hdr}")
     print(f"  {'-' * len(hdr)}")
     for r in results:
         print(
-            f"  {r['server']:<10} {r['model']:<10}"
+            f"  {r['server']:<10}"
             f" {r['rps']:>8.1f} {r['lat_p50_ms']:>8.2f}"
             f" {r['lat_p95_ms']:>8.2f} {r['mem_avg_mb']:>8.1f}"
             f" {r['cpu_avg_pct']:>7.1f}"
@@ -301,12 +274,10 @@ def _print_summary(results: list[dict]):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     servers = ["fastapi", "flask", "grpc"] if args.server == "all" else [args.server]
-    models = ["catboost", "pytorch"] if args.model == "all" else [args.model]
 
     results = []
     for srv in servers:
-        for mdl in models:
-            results.append(run_benchmark(srv, mdl))
+        results.append(run_benchmark(srv))
 
     if len(results) > 1:
         _print_summary(results)

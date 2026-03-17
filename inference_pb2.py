@@ -24,21 +24,25 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0finference.proto\x12\tinference\"4\n\x0ePredictRequest\x12\n\n\x02x1\x18\x01 \x01(\x02\x12\n\n\x02x2\x18\x02 \x01(\x02\x12\n\n\x02x3\x18\x03 \x01(\x02\"%\n\x0fPredictResponse\x12\x12\n\nprediction\x18\x01 \x01(\x02\"\x0f\n\rHealthRequest\"/\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\r\n\x05model\x18\x02 \x01(\t2\x8c\x01\n\tInference\x12@\n\x07Predict\x12\x19.inference.PredictRequest\x1a\x1a.inference.PredictResponse\x12=\n\x06Health\x12\x18.inference.HealthRequest\x1a\x19.inference.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0finference.proto\x12\tinference\"]\n\nTrackPoint\x12\x0b\n\x03lat\x18\x01 \x01(\x02\x12\x0b\n\x03lon\x18\x02 \x01(\x02\x12\r\n\x05speed\x18\x03 \x01(\x02\x12\x12\n\ncourse_sin\x18\x04 \x01(\x02\x12\x12\n\ncourse_cos\x18\x05 \x01(\x02\"\'\n\x0b\x46uturePoint\x12\x0b\n\x03lat\x18\x01 \x01(\x02\x12\x0b\n\x03lon\x18\x02 \x01(\x02\"8\n\x0ePredictRequest\x12&\n\x07history\x18\x01 \x03(\x0b\x32\x15.inference.TrackPoint\"=\n\x0fPredictResponse\x12*\n\nprediction\x18\x01 \x03(\x0b\x32\x16.inference.FuturePoint\"\x0f\n\rHealthRequest\" \n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t2\x8c\x01\n\tInference\x12@\n\x07Predict\x12\x19.inference.PredictRequest\x1a\x1a.inference.PredictResponse\x12=\n\x06Health\x12\x18.inference.HealthRequest\x1a\x19.inference.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'inference_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_PREDICTREQUEST']._serialized_start=30
-  _globals['_PREDICTREQUEST']._serialized_end=82
-  _globals['_PREDICTRESPONSE']._serialized_start=84
-  _globals['_PREDICTRESPONSE']._serialized_end=121
-  _globals['_HEALTHREQUEST']._serialized_start=123
-  _globals['_HEALTHREQUEST']._serialized_end=138
-  _globals['_HEALTHRESPONSE']._serialized_start=140
-  _globals['_HEALTHRESPONSE']._serialized_end=187
-  _globals['_INFERENCE']._serialized_start=190
-  _globals['_INFERENCE']._serialized_end=330
+  _globals['_TRACKPOINT']._serialized_start=30
+  _globals['_TRACKPOINT']._serialized_end=123
+  _globals['_FUTUREPOINT']._serialized_start=125
+  _globals['_FUTUREPOINT']._serialized_end=164
+  _globals['_PREDICTREQUEST']._serialized_start=166
+  _globals['_PREDICTREQUEST']._serialized_end=222
+  _globals['_PREDICTRESPONSE']._serialized_start=224
+  _globals['_PREDICTRESPONSE']._serialized_end=285
+  _globals['_HEALTHREQUEST']._serialized_start=287
+  _globals['_HEALTHREQUEST']._serialized_end=302
+  _globals['_HEALTHRESPONSE']._serialized_start=304
+  _globals['_HEALTHRESPONSE']._serialized_end=336
+  _globals['_INFERENCE']._serialized_start=339
+  _globals['_INFERENCE']._serialized_end=479
 # @@protoc_insertion_point(module_scope)

@@ -7,19 +7,31 @@ service Inference {
   rpc Health  (HealthRequest)  returns (HealthResponse);
 }
 
+// One AIS observation: position + kinematics
+message TrackPoint {
+  float lat        = 1;
+  float lon        = 2;
+  float speed      = 3;
+  float course_sin = 4;
+  float course_cos = 5;
+}
+
+// One forecast waypoint
+message FuturePoint {
+  float lat = 1;
+  float lon = 2;
+}
+
 message PredictRequest {
-  float x1 = 1;
-  float x2 = 2;
-  float x3 = 3;
+  repeated TrackPoint history = 1;  // 30 points (5 min @ 10-sec intervals)
 }
 
 message PredictResponse {
-  float prediction = 1;
+  repeated FuturePoint prediction = 1;  // 15 points (15 min @ 1-min intervals)
 }
 
 message HealthRequest {}
 
 message HealthResponse {
   string status = 1;
-  string model  = 2;
 }
