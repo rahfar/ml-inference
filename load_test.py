@@ -34,6 +34,10 @@ parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--duration", type=int, default=20, help="Test duration in seconds")
 parser.add_argument("--concurrency", type=int, default=10, help="Concurrent async workers")
+parser.add_argument("--no-spawn", action="store_true",
+                    help="Connect to an already-running server instead of spawning one")
+parser.add_argument("--json", action="store_true",
+                    help="Print result as JSON on the last line (for machine parsing)")
 args = parser.parse_args()
 
 BATCH_SIZE = 100
@@ -183,9 +187,12 @@ def run_benchmark(server: str) -> dict:
     print(f"  Duration={args.duration}s  Concurrency={args.concurrency}")
     print(f"{'=' * 60}")
 
-    proc = start_server(server, host, port)
+    proc = None
+    if not args.no_spawn:
+        proc = start_server(server, host, port)
+
     try:
-        print("  Starting server...", end=" ", flush=True)
+        print("  Waiting for server...", end=" ", flush=True)
         if server == "grpc":
             wait_ready_grpc(host, port)
         else:
@@ -194,10 +201,12 @@ def run_benchmark(server: str) -> dict:
 
         samples: list[tuple[float, float]] = []
         stop_evt = threading.Event()
-        mon = threading.Thread(
-            target=monitor_process, args=(proc.pid, 0.5, stop_evt, samples), daemon=True
-        )
-        mon.start()
+        mon = None
+        if proc is not None:
+            mon = threading.Thread(
+                target=monitor_process, args=(proc.pid, 0.5, stop_evt, samples), daemon=True
+            )
+            mon.start()
 
         print("  Running load test...", end=" ", flush=True)
         if server == "grpc":
@@ -208,12 +217,14 @@ def run_benchmark(server: str) -> dict:
             latencies, errors, elapsed = asyncio.run(
                 load_http(url, args.concurrency, args.duration)
             )
-        stop_evt.set()
-        mon.join(timeout=3)
+        if mon is not None:
+            stop_evt.set()
+            mon.join(timeout=3)
         print("done.")
 
     finally:
-        stop_server(proc)
+        if proc is not None:
+            stop_server(proc)
 
     # -----------------------------------------------------------------------
     # Compute stats
@@ -239,7 +250,7 @@ def run_benchmark(server: str) -> dict:
     max_cpu  = max(cpu_vals)             if cpu_vals else float("nan")
 
     result = dict(
-        server=server,
+        server=server, batch_size=BATCH_SIZE,
         requests=n, errors=errors, elapsed=elapsed,
         rps=rps, vessels_per_sec=rps * BATCH_SIZE,
         lat_avg_ms=avg_lat, lat_p50_ms=p50, lat_p95_ms=p95,
@@ -248,6 +259,9 @@ def run_benchmark(server: str) -> dict:
         cpu_avg_pct=avg_cpu, cpu_max_pct=max_cpu,
     )
     _print_result(result)
+    if args.json:
+        import json
+        print(json.dumps(result))
     return result
 
 

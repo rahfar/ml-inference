@@ -4,12 +4,12 @@ Compares inference throughput of a **PyTorch LSTM** vessel track predictor serve
 
 **Task:** predict 15-minute future vessel trajectory from 5-minute AIS history.
 
-| | |
-|---|---|
-| Input  | 30 track points × 5 features (lat, lon, speed, course\_sin, course\_cos) — 10-sec intervals |
-| Output | 15 waypoints × 2 features (lat, lon) — 1-min intervals |
-| Model  | LSTM encoder (hidden=256, layers=2) → linear decoder, ~3 MB on disk |
-| Batch  | 100 vessels per request |
+|        |                                                                                           |
+| ------ | ----------------------------------------------------------------------------------------- |
+| Input  | 30 track points × 5 features (lat, lon, speed, course_sin, course_cos) — 10-sec intervals |
+| Output | 15 waypoints × 2 features (lat, lon) — 1-min intervals                                    |
+| Model  | LSTM encoder (hidden=256, layers=2) → linear decoder, ~3 MB on disk                       |
+| Batch  | 100 vessels per request                                                                   |
 
 Load test: 20 s duration, 10 concurrent async workers.
 
@@ -41,7 +41,7 @@ uv add torch numpy fastapi "uvicorn[standard]" flask waitress psutil httpx grpci
 uv run train_pytorch.py
 ```
 
-**3. Regenerate gRPC stubs** *(only needed after editing `inference.proto`)*
+**3. Regenerate gRPC stubs** _(only needed after editing `inference.proto`)_
 
 ```bash
 uv run python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. inference.proto
@@ -57,10 +57,10 @@ uv run server_grpc.py        # grpc://localhost:8000
 
 Endpoints:
 
-| Protocol | Single vessel         | Batch (N vessels)      |
-|----------|-----------------------|------------------------|
-| HTTP     | `POST /predict`       | `POST /predict_batch`  |
-| gRPC     | `Inference.Predict`   | `Inference.PredictBatch` |
+| Protocol | Single vessel       | Batch (N vessels)        |
+| -------- | ------------------- | ------------------------ |
+| HTTP     | `POST /predict`     | `POST /predict_batch`    |
+| gRPC     | `Inference.Predict` | `Inference.PredictBatch` |
 
 **5. Run the full benchmark**
 
@@ -89,11 +89,11 @@ Batch size is fixed at 100 vessels/request (`BATCH_SIZE` in `load_test.py`).
 
 Environment: macOS Darwin 25.3.0, Python 3.14, 20 s / 10 workers, 100 vessels/request.
 
-| Server  | req/s | vessels/s  |  p50 ms |  p95 ms | Mem avg | CPU avg |
-| ------- | ----: | ---------: | ------: | ------: | ------: | ------: |
-| FastAPI |   138 |     13 780 |   71.45 |   94.87 | 490 MB  |    659% |
-| Flask   |   132 |     13 151 |   74.89 |   89.40 | 323 MB  |    444% |
-| gRPC    | **141** | **14 055** | **69.92** | **85.32** | **313 MB** | 458% |
+| Server  |   req/s |  vessels/s |    p50 ms |    p95 ms |    Mem avg | CPU avg |
+| ------- | ------: | ---------: | --------: | --------: | ---------: | ------: |
+| FastAPI |     138 |     13 780 |     71.45 |     94.87 |     490 MB |    659% |
+| Flask   |     132 |     13 151 |     74.89 |     89.40 |     323 MB |    444% |
+| gRPC    | **141** | **14 055** | **69.92** | **85.32** | **313 MB** |    458% |
 
 ### Observations
 
