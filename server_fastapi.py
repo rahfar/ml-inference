@@ -36,6 +36,13 @@ def _predict(history: np.ndarray) -> list[list[float]]:
         return _model(x).squeeze(0).tolist()  # (15, 2)
 
 
+def _predict_batch(histories: np.ndarray) -> list[list[list[float]]]:
+    """histories: (N, 30, 5) → N × [[lat, lon], ...] × 15"""
+    with torch.no_grad():
+        x = torch.tensor(histories, dtype=torch.float32)  # (N, 30, 5)
+        return _model(x).tolist()  # (N, 15, 2)
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -58,6 +65,14 @@ class PredictResponse(BaseModel):
     prediction: list[list[float]]  # 15 × [lat, lon]
 
 
+class PredictBatchRequest(BaseModel):
+    vessels: list[PredictRequest]  # N vessels, each with 30-point history
+
+
+class PredictBatchResponse(BaseModel):
+    predictions: list[list[list[float]]]  # N × 15 × [lat, lon]
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -70,6 +85,16 @@ def predict(req: PredictRequest):
         dtype=np.float32,
     )
     return PredictResponse(prediction=_predict(x))
+
+
+@app.post("/predict_batch", response_model=PredictBatchResponse)
+def predict_batch(req: PredictBatchRequest):
+    histories = np.array(
+        [[[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in v.history]
+         for v in req.vessels],
+        dtype=np.float32,
+    )
+    return PredictBatchResponse(predictions=_predict_batch(histories))
 
 
 if __name__ == "__main__":

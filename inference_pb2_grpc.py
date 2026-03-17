@@ -39,6 +39,11 @@ class InferenceStub(object):
                 request_serializer=inference__pb2.PredictRequest.SerializeToString,
                 response_deserializer=inference__pb2.PredictResponse.FromString,
                 _registered_method=True)
+        self.PredictBatch = channel.unary_unary(
+                '/inference.Inference/PredictBatch',
+                request_serializer=inference__pb2.PredictBatchRequest.SerializeToString,
+                response_deserializer=inference__pb2.PredictBatchResponse.FromString,
+                _registered_method=True)
         self.Health = channel.unary_unary(
                 '/inference.Inference/Health',
                 request_serializer=inference__pb2.HealthRequest.SerializeToString,
@@ -50,6 +55,12 @@ class InferenceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def Predict(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PredictBatch(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -68,6 +79,11 @@ def add_InferenceServicer_to_server(servicer, server):
                     servicer.Predict,
                     request_deserializer=inference__pb2.PredictRequest.FromString,
                     response_serializer=inference__pb2.PredictResponse.SerializeToString,
+            ),
+            'PredictBatch': grpc.unary_unary_rpc_method_handler(
+                    servicer.PredictBatch,
+                    request_deserializer=inference__pb2.PredictBatchRequest.FromString,
+                    response_serializer=inference__pb2.PredictBatchResponse.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
                     servicer.Health,
@@ -102,6 +118,33 @@ class Inference(object):
             '/inference.Inference/Predict',
             inference__pb2.PredictRequest.SerializeToString,
             inference__pb2.PredictResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PredictBatch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/inference.Inference/PredictBatch',
+            inference__pb2.PredictBatchRequest.SerializeToString,
+            inference__pb2.PredictBatchResponse.FromString,
             options,
             channel_credentials,
             insecure,

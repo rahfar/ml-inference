@@ -35,6 +35,13 @@ def _predict(history: np.ndarray) -> list[list[float]]:
         return _model(x).squeeze(0).tolist()  # (15, 2)
 
 
+def _predict_batch(histories: np.ndarray) -> list[list[list[float]]]:
+    """histories: (N, 30, 5) → N × [[lat, lon], ...] × 15"""
+    with torch.no_grad():
+        x = torch.tensor(histories, dtype=torch.float32)  # (N, 30, 5)
+        return _model(x).tolist()  # (N, 15, 2)
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -55,6 +62,18 @@ def predict():
         dtype=np.float32,
     )
     return jsonify({"prediction": _predict(history)})
+
+
+@app.post("/predict_batch")
+def predict_batch():
+    data = request.get_json(force=True)
+    histories = np.array(
+        [[[p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]]
+          for p in vessel["history"]]
+         for vessel in data["vessels"]],
+        dtype=np.float32,
+    )
+    return jsonify({"predictions": _predict_batch(histories)})
 
 
 if __name__ == "__main__":

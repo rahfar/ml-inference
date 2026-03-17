@@ -9,6 +9,7 @@ Compares inference throughput of a **PyTorch LSTM** vessel track predictor serve
 | Input  | 30 track points × 5 features (lat, lon, speed, course\_sin, course\_cos) — 10-sec intervals |
 | Output | 15 waypoints × 2 features (lat, lon) — 1-min intervals |
 | Model  | LSTM encoder (hidden=256, layers=2) → linear decoder, ~3 MB on disk |
+| Batch  | 100 vessels per request |
 
 Load test: 20 s duration, 10 concurrent async workers.
 
@@ -49,10 +50,17 @@ uv run python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. infere
 **4. Run a server manually (optional)**
 
 ```bash
-uv run server_fastapi.py          # http://localhost:8000
-uv run server_flask.py            # http://localhost:8000
-uv run server_grpc.py             # grpc://localhost:8000
+uv run server_fastapi.py     # http://localhost:8000
+uv run server_flask.py       # http://localhost:8000
+uv run server_grpc.py        # grpc://localhost:8000
 ```
+
+Endpoints:
+
+| Protocol | Single vessel         | Batch (N vessels)      |
+|----------|-----------------------|------------------------|
+| HTTP     | `POST /predict`       | `POST /predict_batch`  |
+| gRPC     | `Inference.Predict`   | `Inference.PredictBatch` |
 
 **5. Run the full benchmark**
 
@@ -75,27 +83,33 @@ uv run load_test.py --server grpc --duration 30 --concurrency 20
 | `--concurrency` | `10`    | Concurrent async workers             |
 | `--port`        | `8000`  | Port to bind the server on           |
 
+Batch size is fixed at 100 vessels/request (`BATCH_SIZE` in `load_test.py`).
+
 ## Results
 
-Environment: macOS Darwin 25.3.0, Python 3.14, 20 s / 10 workers.
+Environment: macOS Darwin 25.3.0, Python 3.14, 20 s / 10 workers, 100 vessels/request.
 
-| Server       |       RPS |   p50 ms |   p95 ms |    Mem avg | CPU avg |
-| ------------ | --------: | -------: | -------: | ---------: | ------: |
-| FastAPI      |     2 006 |     4.91 |     6.20 |     241 MB |    236% |
-| Flask        |     2 505 |     3.85 |     4.45 |     227 MB |    242% |
-| gRPC         | **4 048** | **2.43** | **2.82** | **223 MB** |    393% |
+| Server  | req/s | vessels/s  |  p50 ms |  p95 ms | Mem avg | CPU avg |
+| ------- | ----: | ---------: | ------: | ------: | ------: | ------: |
+| FastAPI |   138 |     13 780 |   71.45 |   94.87 | 490 MB  |    659% |
+| Flask   |   132 |     13 151 |   74.89 |   89.40 | 323 MB  |    444% |
+| gRPC    | **141** | **14 055** | **69.92** | **85.32** | **313 MB** | 458% |
 
 ### Observations
 
-**gRPC vs HTTP**
+**Batch inference narrows the gap between transports**
 
-- gRPC is **~2× faster** (4 048 vs 2 505 RPS) and delivers tighter latency (p95 2.8 ms vs 4.5 ms).
-- Binary framing (protobuf) eliminates HTTP text parsing. Persistent connections remove per-request TCP/TLS setup.
-- The larger request payload (30 structured points vs a few scalars) amplifies the serialization saving: protobuf encoding is roughly 5–10× more compact and faster than JSON for repeated numeric messages.
+- With 100-vessel batches the bottleneck is almost entirely model compute; transport overhead is a small fraction of the ~70 ms round trip.
+- gRPC still leads, but by ~2% in throughput rather than the 2× seen with single-vessel requests.
+- Latency variance tightens across all three servers (p95/p50 ratio ≈ 1.2–1.3× for batch vs 1.3–1.5× for single).
 
-**Flask beats FastAPI with a heavy model**
+**FastAPI's memory and CPU costs grow with payload size**
 
-- With a small model (previous MLP), FastAPI (ASGI/async) was ~7% faster.
-- With the LSTM, Flask+Waitress (4 OS threads) overtakes FastAPI by ~25%.
-- Reason: PyTorch LSTM inference releases the GIL, so Waitress's 4 true threads can run 4 inferences in parallel. FastAPI's single-process event loop cannot overlap CPU-bound compute as effectively, even though it is non-blocking.
-- Memory is similar across all three servers (~220–240 MB); the model dominates the footprint.
+- FastAPI uses 490 MB vs 313–323 MB for gRPC/Flask — ~50% more memory.
+- FastAPI also burns 659% CPU vs 444–458% for the others.
+- Root cause: JSON serialization of the response (100 vessels × 15 waypoints × 2 coords = 3 000 floats as text) is expensive. Flask/gRPC handle the same data more efficiently (Flask with simple `jsonify`, gRPC with binary protobuf).
+
+**gRPC's memory advantage grows with batch size**
+
+- Binary protobuf encoding of the 100-vessel response is ~5–10× more compact than JSON, cutting both allocation pressure and serialization CPU.
+- Flask is competitive on throughput but allocates ~10 MB more than gRPC even for the same model.

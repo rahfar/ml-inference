@@ -38,6 +38,13 @@ def _predict(history: np.ndarray) -> list[list[float]]:
         return _model(x).squeeze(0).tolist()  # (15, 2)
 
 
+def _predict_batch(histories: np.ndarray) -> list[list[list[float]]]:
+    """histories: (N, 30, 5) → N × [[lat, lon], ...] × 15"""
+    with torch.no_grad():
+        x = torch.tensor(histories, dtype=torch.float32)  # (N, 30, 5)
+        return _model(x).tolist()  # (N, 15, 2)
+
+
 # ---------------------------------------------------------------------------
 # Servicer
 # ---------------------------------------------------------------------------
@@ -52,6 +59,22 @@ class InferenceServicer(inference_pb2_grpc.InferenceServicer):
         return inference_pb2.PredictResponse(
             prediction=[
                 inference_pb2.FuturePoint(lat=pt[0], lon=pt[1]) for pt in result
+            ]
+        )
+
+    def PredictBatch(self, request, context):
+        histories = np.array(
+            [[[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in v.history]
+             for v in request.vessels],
+            dtype=np.float32,
+        )
+        results = _predict_batch(histories)
+        return inference_pb2.PredictBatchResponse(
+            predictions=[
+                inference_pb2.PredictResponse(
+                    prediction=[inference_pb2.FuturePoint(lat=pt[0], lon=pt[1]) for pt in pred]
+                )
+                for pred in results
             ]
         )
 

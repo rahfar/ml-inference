@@ -1,5 +1,8 @@
 """Load test: measures RPS, latency percentiles, memory and CPU of the server process.
 
+Each request is a batch of BATCH_SIZE vessels; stats are reported both per-request
+and as vessels/sec (RPS × BATCH_SIZE).
+
 Usage:
     python load_test.py --server fastapi
     python load_test.py --server grpc
@@ -33,13 +36,17 @@ parser.add_argument("--duration", type=int, default=20, help="Test duration in s
 parser.add_argument("--concurrency", type=int, default=10, help="Concurrent async workers")
 args = parser.parse_args()
 
-# Fixed test payload: 30 track points
+BATCH_SIZE = 100
+
+# Fixed test payload: batch of BATCH_SIZE vessels, each with 30 track points
 _TRACK = [
     {"lat": 58.0 + i * 0.001, "lon": 10.0, "speed": 12.0, "course_sin": 0.5, "course_cos": 0.866}
     for i in range(HISTORY_STEPS)
 ]
-HTTP_PAYLOAD = {"history": _TRACK}
-GRPC_REQUEST = inference_pb2.PredictRequest(
+_VESSEL = {"history": _TRACK}
+HTTP_PAYLOAD = {"vessels": [_VESSEL] * BATCH_SIZE}
+
+_grpc_single = inference_pb2.PredictRequest(
     history=[
         inference_pb2.TrackPoint(
             lat=p["lat"], lon=p["lon"], speed=p["speed"],
@@ -48,6 +55,7 @@ GRPC_REQUEST = inference_pb2.PredictRequest(
         for p in _TRACK
     ]
 )
+GRPC_REQUEST = inference_pb2.PredictBatchRequest(vessels=[_grpc_single] * BATCH_SIZE)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +134,7 @@ async def load_http(url: str, concurrency: int, duration: float):
             while time.monotonic() - start < duration:
                 t0 = time.monotonic()
                 try:
-                    resp = await client.post(f"{url}/predict", json=HTTP_PAYLOAD)
+                    resp = await client.post(f"{url}/predict_batch", json=HTTP_PAYLOAD)
                     resp.raise_for_status()
                     latencies.append(time.monotonic() - t0)
                 except Exception:
@@ -151,7 +159,7 @@ async def load_grpc(host: str, port: int, concurrency: int, duration: float):
             while time.monotonic() - start < duration:
                 t0 = time.monotonic()
                 try:
-                    await stub.Predict(GRPC_REQUEST)
+                    await stub.PredictBatch(GRPC_REQUEST)
                     latencies.append(time.monotonic() - t0)
                 except Exception:
                     errors += 1
@@ -232,7 +240,8 @@ def run_benchmark(server: str) -> dict:
 
     result = dict(
         server=server,
-        requests=n, errors=errors, elapsed=elapsed, rps=rps,
+        requests=n, errors=errors, elapsed=elapsed,
+        rps=rps, vessels_per_sec=rps * BATCH_SIZE,
         lat_avg_ms=avg_lat, lat_p50_ms=p50, lat_p95_ms=p95,
         lat_p99_ms=p99, lat_max_ms=max_lat,
         mem_avg_mb=avg_mem, mem_max_mb=max_mem,
@@ -243,7 +252,7 @@ def run_benchmark(server: str) -> dict:
 
 
 def _print_result(r: dict):
-    print(f"\n  Throughput : {r['rps']:.1f} req/s  ({r['requests']} requests, {r['errors']} errors)")
+    print(f"\n  Throughput : {r['rps']:.1f} req/s  ×{BATCH_SIZE} = {r['vessels_per_sec']:.0f} vessels/s  ({r['requests']} requests, {r['errors']} errors)")
     print(f"  Latency    : avg={r['lat_avg_ms']:.2f}ms  p50={r['lat_p50_ms']:.2f}ms  p95={r['lat_p95_ms']:.2f}ms  p99={r['lat_p99_ms']:.2f}ms  max={r['lat_max_ms']:.2f}ms")
     print(f"  Memory     : avg={r['mem_avg_mb']:.1f}MB  max={r['mem_max_mb']:.1f}MB")
     print(f"  CPU        : avg={r['cpu_avg_pct']:.1f}%   max={r['cpu_max_pct']:.1f}%")
@@ -256,15 +265,15 @@ def _print_summary(results: list[dict]):
     print(f"\n{'=' * 60}")
     print("  SUMMARY")
     print(f"{'=' * 60}")
-    hdr = f"{'Server':<10} {'RPS':>8} {'p50 ms':>8} {'p95 ms':>8} {'MemMB':>8} {'CPU%':>7}"
+    hdr = f"{'Server':<10} {'req/s':>8} {'vessels/s':>10} {'p50 ms':>8} {'p95 ms':>8} {'MemMB':>8} {'CPU%':>7}"
     print(f"  {hdr}")
     print(f"  {'-' * len(hdr)}")
     for r in results:
         print(
             f"  {r['server']:<10}"
-            f" {r['rps']:>8.1f} {r['lat_p50_ms']:>8.2f}"
-            f" {r['lat_p95_ms']:>8.2f} {r['mem_avg_mb']:>8.1f}"
-            f" {r['cpu_avg_pct']:>7.1f}"
+            f" {r['rps']:>8.1f} {r['vessels_per_sec']:>10.0f}"
+            f" {r['lat_p50_ms']:>8.2f} {r['lat_p95_ms']:>8.2f}"
+            f" {r['mem_avg_mb']:>8.1f} {r['cpu_avg_pct']:>7.1f}"
         )
     print()
 

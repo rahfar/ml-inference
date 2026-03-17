@@ -54,11 +54,12 @@ All servers load the model at startup and expose predict + health:
 - `server_flask.py` — Flask + Waitress (4 threads, WSGI); same HTTP endpoints
 - `server_grpc.py` — gRPC threadpool (4 workers); `Inference.Predict` + `Inference.Health` RPCs; proto in `inference.proto`, stubs in `inference_pb2.py` / `inference_pb2_grpc.py`
 
-HTTP request: `{"history": [{"lat", "lon", "speed", "course_sin", "course_cos"}, ×30]}`
-HTTP response: `{"prediction": [[lat, lon], ×15]}`
+Single: HTTP `POST /predict` → `{"history": [{lat,lon,speed,course_sin,course_cos}×30]}` → `{"prediction": [[lat,lon]×15]}`
+Batch:  HTTP `POST /predict_batch` → `{"vessels": [<history>×N]}` → `{"predictions": [[[lat,lon]×15]×N]}`
+gRPC:   `Inference.Predict` (single) / `Inference.PredictBatch` (batch of N `PredictRequest`s)
 
 ### Benchmark orchestrator (`load_test.py`)
 1. Spawns server subprocess; polls HTTP `/health` or gRPC `Health` RPC until ready
 2. Drives async load — HTTP via `httpx`, gRPC via `grpc.aio` — at configured concurrency
 3. Background thread samples RSS and CPU via `psutil` every 0.5 s
-4. Computes p50/p95/p99/avg/max latency, prints per-run stats and final summary table
+4. Computes p50/p95/p99/avg/max latency; reports both req/s and vessels/s (req/s × `BATCH_SIZE`); prints per-run stats and final summary table

@@ -3,8 +3,9 @@ syntax = "proto3";
 package inference;
 
 service Inference {
-  rpc Predict (PredictRequest) returns (PredictResponse);
-  rpc Health  (HealthRequest)  returns (HealthResponse);
+  rpc Predict      (PredictRequest)      returns (PredictResponse);
+  rpc PredictBatch (PredictBatchRequest) returns (PredictBatchResponse);
+  rpc Health       (HealthRequest)       returns (HealthResponse);
 }
 
 // One AIS observation: position + kinematics
@@ -28,6 +29,14 @@ message PredictRequest {
 
 message PredictResponse {
   repeated FuturePoint prediction = 1;  // 15 points (15 min @ 1-min intervals)
+}
+
+message PredictBatchRequest {
+  repeated PredictRequest vessels = 1;  // N vessels (e.g. 100)
+}
+
+message PredictBatchResponse {
+  repeated PredictResponse predictions = 1;  // N results
 }
 
 message HealthRequest {}
