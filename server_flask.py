@@ -1,4 +1,4 @@
-"""Flask (WSGI) inference server served via Waitress.
+"""Flask (WSGI) inference server served via Gunicorn.
 
 Usage:
     python server_flask.py
@@ -77,7 +77,13 @@ def predict_batch():
 
 
 if __name__ == "__main__":
-    from waitress import serve
+    import subprocess, sys
 
-    print(f"Serving Flask+Waitress on {args.host}:{args.port}")
-    serve(app, host=args.host, port=args.port, threads=4)
+    print(f"Serving Flask+Gunicorn on {args.host}:{args.port}")
+    subprocess.run([
+        sys.executable, "-m", "gunicorn",
+        "server_flask:app",
+        "--bind", f"{args.host}:{args.port}",
+        "--workers", "4",
+        "--log-level", "warning",
+    ])
