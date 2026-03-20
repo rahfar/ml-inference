@@ -93,14 +93,14 @@ Environment: VPS x86_64 Linux, Python 3.12, client on macOS over internet.
 
 | Server   |    req/s | vessels/s |  p50 ms |  p95 ms |  p99 ms |  max ms |
 | -------- | -------: | --------: | ------: | ------: | ------: | ------: |
-| FastAPI  |     35.3 |     3 526 |     269 |     429 |     604 |     913 |
+| FastAPI  |     34.7 |     3 467 |     277 |     388 |     618 |   1 022 |
 | **gRPC** | **41.5** | **4 153** | **238** | **313** | **380** | **510** |
 
 ### Data throughput
 
 | Server   | req payload | resp payload | round-trip | total transferred | throughput |
 | -------- | ----------: | -----------: | ---------: | ----------------: | ---------: |
-| FastAPI  |    250.1 KB |      28.9 KB |   279.0 KB |            193 MB |   9.7 MB/s |
+| FastAPI  |    250.1 KB |      28.9 KB |   279.0 KB |            190 MB |   9.5 MB/s |
 | **gRPC** |     79.4 KB |      17.3 KB |    96.7 KB |             79 MB |   4.0 MB/s |
 
 gRPC request payloads are **3.2× smaller** than JSON (protobuf binary vs text encoding of 100 × 30 track points).
