@@ -33,33 +33,50 @@ parser.add_argument("--server", choices=["fastapi", "grpc", "all"], default="all
 parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--duration", type=int, default=20, help="Test duration in seconds")
-parser.add_argument("--concurrency", type=int, default=10, help="Concurrent async workers")
-parser.add_argument("--no-spawn", action="store_true",
-                    help="Connect to an already-running server instead of spawning one")
-parser.add_argument("--json", action="store_true",
-                    help="Print result as JSON on the last line (for machine parsing)")
+parser.add_argument(
+    "--concurrency", type=int, default=10, help="Concurrent async workers"
+)
+parser.add_argument(
+    "--no-spawn",
+    action="store_true",
+    help="Connect to an already-running server instead of spawning one",
+)
+parser.add_argument(
+    "--json",
+    action="store_true",
+    help="Print result as JSON on the last line (for machine parsing)",
+)
 args = parser.parse_args()
 
 BATCH_SIZE = 100
 
 # Fixed test payload: batch of BATCH_SIZE vessels, each with 30 track points
 _TRACK = [
-    {"lat": 58.0 + i * 0.001, "lon": 10.0, "speed": 12.0, "course_sin": 0.5, "course_cos": 0.866}
+    {
+        "lat": 58.0 + i * 0.001,
+        "lon": 10.0,
+        "speed": 12.0,
+        "course_sin": 0.5,
+        "course_cos": 0.866,
+    }
     for i in range(HISTORY_STEPS)
 ]
 _VESSEL = {"history": _TRACK}
 HTTP_PAYLOAD = {"vessels": [_VESSEL] * BATCH_SIZE}
 
-_grpc_single = inference_pb2.PredictRequest(
+_grpc_single = inference_pb2.PredictRequest(  # type: ignore
     history=[
-        inference_pb2.TrackPoint(
-            lat=p["lat"], lon=p["lon"], speed=p["speed"],
-            course_sin=p["course_sin"], course_cos=p["course_cos"],
+        inference_pb2.TrackPoint(  # type: ignore
+            lat=p["lat"],
+            lon=p["lon"],
+            speed=p["speed"],
+            course_sin=p["course_sin"],
+            course_cos=p["course_cos"],
         )
         for p in _TRACK
     ]
 )
-GRPC_REQUEST = inference_pb2.PredictBatchRequest(vessels=[_grpc_single] * BATCH_SIZE)
+GRPC_REQUEST = inference_pb2.PredictBatchRequest(vessels=[_grpc_single] * BATCH_SIZE)  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +90,7 @@ def start_server(server: str, host: str, port: int) -> subprocess.Popen:
 
 def wait_ready(url: str, timeout: float = 30.0):
     import urllib.request
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -89,11 +107,13 @@ def wait_ready_grpc(host: str, port: int, timeout: float = 30.0):
         try:
             with grpc.insecure_channel(f"{host}:{port}") as channel:
                 stub = inference_pb2_grpc.InferenceStub(channel)
-                stub.Health(inference_pb2.HealthRequest(), timeout=1.0)
+                stub.Health(inference_pb2.HealthRequest(), timeout=1.0)  # type: ignore
                 return
         except Exception:
             time.sleep(0.2)
-    raise TimeoutError(f"gRPC server at {host}:{port} did not become ready within {timeout}s")
+    raise TimeoutError(
+        f"gRPC server at {host}:{port} did not become ready within {timeout}s"
+    )
 
 
 def stop_server(proc: subprocess.Popen):
@@ -107,7 +127,9 @@ def stop_server(proc: subprocess.Popen):
 # ---------------------------------------------------------------------------
 # Process monitor (background thread)
 # ---------------------------------------------------------------------------
-def monitor_process(pid: int, interval: float, stop_event: threading.Event, samples: list):
+def monitor_process(
+    pid: int, interval: float, stop_event: threading.Event, samples: list
+):
     try:
         proc = psutil.Process(pid)
         proc.cpu_percent()  # first call initialises the counter
@@ -168,7 +190,9 @@ async def load_grpc(host: str, port: int, concurrency: int, duration: float):
                 except Exception:
                     errors += 1
 
-        await asyncio.gather(*[asyncio.create_task(worker()) for _ in range(concurrency)])
+        await asyncio.gather(
+            *[asyncio.create_task(worker()) for _ in range(concurrency)]
+        )
         elapsed = time.monotonic() - start
 
     return latencies, errors, elapsed
@@ -180,7 +204,7 @@ async def load_grpc(host: str, port: int, concurrency: int, duration: float):
 def run_benchmark(server: str) -> dict:
     host = args.host
     port = args.port
-    url  = f"http://{host}:{port}"
+    url = f"http://{host}:{port}"
 
     print(f"\n{'=' * 60}")
     print(f"  Server={server.upper()}")
@@ -204,7 +228,9 @@ def run_benchmark(server: str) -> dict:
         mon = None
         if proc is not None:
             mon = threading.Thread(
-                target=monitor_process, args=(proc.pid, 0.5, stop_evt, samples), daemon=True
+                target=monitor_process,
+                args=(proc.pid, 0.5, stop_evt, samples),
+                daemon=True,
             )
             mon.start()
 
@@ -229,14 +255,14 @@ def run_benchmark(server: str) -> dict:
     # -----------------------------------------------------------------------
     # Compute stats
     # -----------------------------------------------------------------------
-    n   = len(latencies)
+    n = len(latencies)
     rps = n / elapsed if elapsed > 0 else 0
 
-    lat_ms = sorted(l * 1000 for l in latencies)
+    lat_ms = sorted(lat * 1000 for lat in latencies)
     if lat_ms:
-        p50     = statistics.median(lat_ms)
-        p95     = lat_ms[int(len(lat_ms) * 0.95)]
-        p99     = lat_ms[int(len(lat_ms) * 0.99)]
+        p50 = statistics.median(lat_ms)
+        p95 = lat_ms[int(len(lat_ms) * 0.95)]
+        p99 = lat_ms[int(len(lat_ms) * 0.99)]
         avg_lat = statistics.mean(lat_ms)
         max_lat = lat_ms[-1]
     else:
@@ -244,30 +270,44 @@ def run_benchmark(server: str) -> dict:
 
     mem_vals = [s[0] for s in samples]
     cpu_vals = [s[1] for s in samples]
-    avg_mem  = statistics.mean(mem_vals) if mem_vals else float("nan")
-    max_mem  = max(mem_vals)             if mem_vals else float("nan")
-    avg_cpu  = statistics.mean(cpu_vals) if cpu_vals else float("nan")
-    max_cpu  = max(cpu_vals)             if cpu_vals else float("nan")
+    avg_mem = statistics.mean(mem_vals) if mem_vals else float("nan")
+    max_mem = max(mem_vals) if mem_vals else float("nan")
+    avg_cpu = statistics.mean(cpu_vals) if cpu_vals else float("nan")
+    max_cpu = max(cpu_vals) if cpu_vals else float("nan")
 
     result = dict(
-        server=server, batch_size=BATCH_SIZE,
-        requests=n, errors=errors, elapsed=elapsed,
-        rps=rps, vessels_per_sec=rps * BATCH_SIZE,
-        lat_avg_ms=avg_lat, lat_p50_ms=p50, lat_p95_ms=p95,
-        lat_p99_ms=p99, lat_max_ms=max_lat,
-        mem_avg_mb=avg_mem, mem_max_mb=max_mem,
-        cpu_avg_pct=avg_cpu, cpu_max_pct=max_cpu,
+        server=server,
+        batch_size=BATCH_SIZE,
+        requests=n,
+        errors=errors,
+        elapsed=elapsed,
+        rps=rps,
+        vessels_per_sec=rps * BATCH_SIZE,
+        lat_avg_ms=avg_lat,
+        lat_p50_ms=p50,
+        lat_p95_ms=p95,
+        lat_p99_ms=p99,
+        lat_max_ms=max_lat,
+        mem_avg_mb=avg_mem,
+        mem_max_mb=max_mem,
+        cpu_avg_pct=avg_cpu,
+        cpu_max_pct=max_cpu,
     )
     _print_result(result)
     if args.json:
         import json
+
         print(json.dumps(result))
     return result
 
 
 def _print_result(r: dict):
-    print(f"\n  Throughput : {r['rps']:.1f} req/s  ×{BATCH_SIZE} = {r['vessels_per_sec']:.0f} vessels/s  ({r['requests']} requests, {r['errors']} errors)")
-    print(f"  Latency    : avg={r['lat_avg_ms']:.2f}ms  p50={r['lat_p50_ms']:.2f}ms  p95={r['lat_p95_ms']:.2f}ms  p99={r['lat_p99_ms']:.2f}ms  max={r['lat_max_ms']:.2f}ms")
+    print(
+        f"\n  Throughput : {r['rps']:.1f} req/s  ×{BATCH_SIZE} = {r['vessels_per_sec']:.0f} vessels/s  ({r['requests']} requests, {r['errors']} errors)"
+    )
+    print(
+        f"  Latency    : avg={r['lat_avg_ms']:.2f}ms  p50={r['lat_p50_ms']:.2f}ms  p95={r['lat_p95_ms']:.2f}ms  p99={r['lat_p99_ms']:.2f}ms  max={r['lat_max_ms']:.2f}ms"
+    )
     print(f"  Memory     : avg={r['mem_avg_mb']:.1f}MB  max={r['mem_max_mb']:.1f}MB")
     print(f"  CPU        : avg={r['cpu_avg_pct']:.1f}%   max={r['cpu_max_pct']:.1f}%")
 

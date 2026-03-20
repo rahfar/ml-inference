@@ -75,7 +75,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 criterion = nn.MSELoss()
 
 print("Training VesselTrackPredictor …")
-for epoch in range(20):
+for epoch in range(3):
     model.train()
     tr_loss = 0.0
     for xb, yb in train_dl:
