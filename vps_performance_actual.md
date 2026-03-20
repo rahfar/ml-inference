@@ -29,49 +29,38 @@ At the observed throughputs, this translates directly into data transfer rates:
 
 ---
 
-## Actual Results — Single Worker (baseline)
+## Actual Results — Baseline (Waitress)
 
 | Server  |   req/s | vessels/s |  p50 ms |  p95 ms |  p99 ms | Mem (idle) |
 | ------- | ------: | --------: | ------: | ------: | ------: | ---------: |
-| FastAPI (1 worker) |    22.5 |     2 250 |  449.21 |  695.77 |  814.26 |    ~437 MB |
-| Flask   |    36.6 |     3 655 |  263.87 |  367.31 |  505.60 |    ~276 MB |
-| gRPC    | **39.0** | **3 902** | **252.89** | **335.62** | **379.81** | **~240 MB** |
+| FastAPI (Uvicorn 1w) |  22.5 |  2 250 |  449 ms |  696 ms |  814 ms |    ~437 MB |
+| Flask (Waitress 4t)  |  36.6 |  3 655 |  264 ms |  367 ms |  506 ms |    ~276 MB |
+| gRPC (threadpool 4w) | **39.0** | **3 902** | **253 ms** | **336 ms** | **380 ms** | **~240 MB** |
 
-## FastAPI — 4 Workers (follow-up test)
+## Flask — Gunicorn follow-up tests
 
-The initial result identified FastAPI's single-worker Uvicorn default as a bottleneck.
-A second run was done with `workers=4` in `uvicorn.run()`.
+### Attempt 1: Gunicorn 4 workers (naïve translation of "4 threads")
 
-| Server  |   req/s | vessels/s |  p50 ms |  p95 ms |  p99 ms | Mem (idle) |
-| ------- | ------: | --------: | ------: | ------: | ------: | ---------: |
-| FastAPI (1 worker) |    22.5 |     2 250 |  449 ms |  696 ms |  814 ms |    ~437 MB |
-| FastAPI (4 workers)|    12.7 |     1 272 |  790 ms | 1093 ms | 1204 ms |  **~1.08 GB** |
+| Config | req/s | p50 ms | Mem |
+| ------ | ----: | -----: | --: |
+| Waitress 4 threads | 36.6 | 264 ms | ~276 MB |
+| Gunicorn 4 workers | **2.4** | **4131 ms** | — |
 
-**4 workers made things worse.** Throughput dropped 44% and p50 latency nearly doubled.
+4 separate processes × PyTorch's default multi-core intra-op parallelism = 4 × 4 = **16 threads competing for 4 vCPUs**. Each inference call slowed from ~250 ms to ~1 second; with 10 concurrent clients queuing, p50 ballooned to 4 s.
 
-### Why 4 workers hurt performance
+### Attempt 2: Gunicorn 1 worker + 4 threads (correct equivalent of Waitress 4 threads)
 
-Uvicorn's `--workers` creates separate Python *processes*, not threads. Each worker:
-1. **Loads the model independently** → 4 × ~270 MB = ~1.08 GB RSS (confirmed by `docker stats`)
-2. **Gets its own asyncio thread pool** (default: `min(32, cpu_count+4)` = 8 threads per worker) → 4 × 8 = 32 threads competing for 4 vCPUs
+Gunicorn's `--threads N` flag creates N threads within a single worker process — identical to Waitress's thread model.
 
-With the single-worker setup, the thread pool already saturated all 4 vCPUs with 8 inference threads.
-Adding 3 more workers multiplied thread count 4× on the same CPUs, massively increasing context-switching and cache pressure.
+| Config | req/s | vessels/s | p50 ms | p95 ms | p99 ms | Mem |
+| ------ | ----: | --------: | -----: | -----: | -----: | --: |
+| Waitress 4 threads        | 36.6 | 3 655 | 264 ms | 367 ms | 506 ms | ~276 MB |
+| Gunicorn 1w + 4t (Docker) | — | — | — | — | — | — |
+| Gunicorn 1w + 4t (native) | **31.9** | **3 191** | **299 ms** | **438 ms** | **691 ms** | **~682 MB** |
 
-**Flask's 4 threads and gRPC's 4-worker threadpool work correctly** because they are deliberately sized to match the vCPU count (1 thread per vCPU, no over-subscription).
+Native gunicorn reaches ~87% of the Waitress result. The ~13% gap is mostly explained by higher memory RSS (native venv carries more overhead than the slim Docker image: ~682 MB vs ~276 MB), which increases memory pressure and page-fault frequency during inference.
 
-### The right FastAPI fix
-
-Set `--workers 1` (default) but limit the thread pool to 4 to match vCPU count:
-```python
-# server_fastapi.py — configure thread pool size to match vCPUs
-import asyncio, concurrent.futures
-loop = asyncio.get_event_loop()
-loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=4))
-```
-Or restructure inference as a true async endpoint using `run_in_executor` with an explicit bounded pool.
-
-*Memory measured via `docker stats --no-stream` at idle after run; CPU not captured (`--no-spawn` mode).*
+*Memory for native run measured via `ps aux` RSS sum (gunicorn master + worker); no Docker involved.*
 
 ---
 
@@ -160,21 +149,22 @@ Predicted 20 ms RTT; actual avg is **14 ms** (better, not worse). However, since
 | Insight | Detail |
 | ------- | ------ |
 | VPS x86 CPU is ~3–4× slower than Apple Silicon for PyTorch LSTM | Inference dominates; RTT is negligible |
-| FastAPI single-worker thread pool already saturates all vCPUs | Adding more workers multiplies threads and increases contention |
+| For CPU-bound inference, process count × PyTorch threads must not exceed vCPU count | FastAPI 4w and Gunicorn 4w both collapsed for this reason |
+| Correct Gunicorn equivalent of Waitress 4 threads: `--workers 1 --threads 4` | Single process, 4 threads — same as Waitress; reaches ~87% of Waitress result |
 | gRPC wins on all axes | Binary encoding + threadpool = best throughput, lowest latency, lowest memory, lowest bandwidth |
 | JSON request payload is 2.9× larger than protobuf | 220 KB vs 80 KB per request; matters at scale even on high-bandwidth links |
-| Memory predictions were accurate | Model footprint is hardware-independent |
-| 4-worker FastAPI is counterproductive on 4-vCPU CPU-bound workload | 1 worker + bounded thread pool (4 threads) is the correct fix |
+| Native venv has higher RSS than Docker slim image | ~682 MB (native) vs ~276 MB (Docker) for same Flask app — more memory pressure |
 
 ---
 
 ## Baseline Reference
 
-| Server  | Localhost req/s | VPS req/s | VPS/Localhost |
-| ------- | --------------: | --------: | ------------: |
-| FastAPI (1w) |         138 |      22.5 |        **16%** |
-| FastAPI (4w) |         138 |      12.7 |         **9%** |
-| Flask   |             132 |      36.6 |        **28%** |
-| gRPC    |             141 |      39.0 |        **28%** |
+| Server | Config | Localhost req/s | VPS req/s | VPS/Localhost |
+| ------ | ------ | --------------: | --------: | ------------: |
+| FastAPI | Uvicorn 1 worker     | 138 |  22.5 |  **16%** |
+| Flask   | Waitress 4 threads   | 132 |  36.6 |  **28%** |
+| Flask   | Gunicorn 4 workers   | 132 |   2.4 |   **2%** |
+| Flask   | Gunicorn 1w + 4t     | 132 |  31.9 |  **24%** |
+| gRPC    | Threadpool 4 workers | 141 |  39.0 |  **28%** |
 
-The VPS delivers only **9–28% of localhost throughput** — far below the predicted 65–82%. The gap is almost entirely explained by the CPU speed difference per inference call. The 4-worker FastAPI result shows that naive "add more workers" tuning backfires on CPU-bound workloads when thread count exceeds vCPU count.
+The VPS delivers only **16–28% of localhost throughput** at best. The Gunicorn 4-process result (~2%) demonstrates that naive multi-process scaling backfires severely when inference is CPU-bound and PyTorch's intra-op threads exceed available vCPUs.

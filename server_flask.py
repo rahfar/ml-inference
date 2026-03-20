@@ -4,21 +4,11 @@ Usage:
     python server_flask.py
     python server_flask.py --port 8001
 """
-import argparse
-
 import numpy as np
 import torch
 from flask import Flask, jsonify, request
 
 from model_def import VesselTrackPredictor
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="Flask inference server")
-parser.add_argument("--host", default="0.0.0.0")
-parser.add_argument("--port", type=int, default=8000)
-args = parser.parse_args()
 
 # ---------------------------------------------------------------------------
 # Model loading
@@ -77,13 +67,19 @@ def predict_batch():
 
 
 if __name__ == "__main__":
-    import subprocess, sys
+    import argparse, subprocess, sys
+
+    parser = argparse.ArgumentParser(description="Flask inference server")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
 
     print(f"Serving Flask+Gunicorn on {args.host}:{args.port}")
     subprocess.run([
         sys.executable, "-m", "gunicorn",
         "server_flask:app",
         "--bind", f"{args.host}:{args.port}",
-        "--workers", "4",
+        "--workers", "1",
+        "--threads", "4",
         "--log-level", "warning",
     ])
