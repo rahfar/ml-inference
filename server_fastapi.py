@@ -14,7 +14,6 @@ Usage:
 
 import argparse
 import asyncio
-import os
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -94,7 +93,10 @@ async def predict(request: Request):
     body = await request.json()
     history = body["history"]
     x = np.array(
-        [[p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]] for p in history],
+        [
+            [p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]]
+            for p in history
+        ],
         dtype=np.float32,
     )
     loop = asyncio.get_running_loop()
@@ -108,7 +110,10 @@ async def predict_batch(request: Request):
     vessels = body["vessels"]
     histories = np.array(
         [
-            [[p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]] for p in v["history"]]
+            [
+                [p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]]
+                for p in v["history"]
+            ]
             for v in vessels
         ],
         dtype=np.float32,
