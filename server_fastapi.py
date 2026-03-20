@@ -4,6 +4,7 @@ Usage:
     python server_fastapi.py
     python server_fastapi.py --port 8001
 """
+
 import argparse
 
 import numpy as np
@@ -11,7 +12,7 @@ import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from model_def import HISTORY_STEPS, VesselTrackPredictor
+from model_def import VesselTrackPredictor
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -90,8 +91,10 @@ def predict(req: PredictRequest):
 @app.post("/predict_batch", response_model=PredictBatchResponse)
 def predict_batch(req: PredictBatchRequest):
     histories = np.array(
-        [[[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in v.history]
-         for v in req.vessels],
+        [
+            [[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in v.history]
+            for v in req.vessels
+        ],
         dtype=np.float32,
     )
     return PredictBatchResponse(predictions=_predict_batch(histories))
@@ -99,4 +102,5 @@ def predict_batch(req: PredictBatchRequest):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
