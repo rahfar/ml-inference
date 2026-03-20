@@ -29,7 +29,7 @@ from model_def import HISTORY_STEPS
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Vessel track inference load test")
-parser.add_argument("--server", choices=["fastapi", "flask", "grpc", "all"], default="all")
+parser.add_argument("--server", choices=["fastapi", "grpc", "all"], default="all")
 parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--duration", type=int, default=20, help="Test duration in seconds")
@@ -66,7 +66,7 @@ GRPC_REQUEST = inference_pb2.PredictBatchRequest(vessels=[_grpc_single] * BATCH_
 # Server lifecycle
 # ---------------------------------------------------------------------------
 def start_server(server: str, host: str, port: int) -> subprocess.Popen:
-    scripts = {"fastapi": "server_fastapi.py", "flask": "server_flask.py", "grpc": "server_grpc.py"}
+    scripts = {"fastapi": "server_fastapi.py", "grpc": "server_grpc.py"}
     cmd = [sys.executable, scripts[server], "--host", host, "--port", str(port)]
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -296,7 +296,7 @@ def _print_summary(results: list[dict]):
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    servers = ["fastapi", "flask", "grpc"] if args.server == "all" else [args.server]
+    servers = ["fastapi", "grpc"] if args.server == "all" else [args.server]
 
     results = []
     for srv in servers:

@@ -1,7 +1,7 @@
 [project]
 name = "ml-inference"
 version = "0.1.0"
-description = "ML inference benchmark: CatBoost vs PyTorch, FastAPI vs Flask"
+description = "ML inference benchmark: PyTorch LSTM via FastAPI and gRPC"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,8 +10,7 @@ dependencies = [
     "numpy",
     "fastapi",
     "uvicorn[standard]",
-    "flask",
-    "gunicorn",
+    "orjson",
     "psutil",
     "httpx",
     "grpcio",

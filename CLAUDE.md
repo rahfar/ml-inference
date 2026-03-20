@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ML inference benchmark serving a **PyTorch LSTM** vessel track predictor via FastAPI (ASGI/Uvicorn), Flask+Gunicorn (WSGI, 1 worker + 4 threads), and gRPC (binary/threadpool).
+ML inference benchmark serving a **PyTorch LSTM** vessel track predictor via FastAPI (ASGI/Uvicorn) and gRPC (binary/threadpool).
 
 - **Task:** predict 15-min future vessel trajectory from 5-min AIS history
 - **Input:** 30 track points × 5 features (lat, lon, speed, course\_sin, course\_cos) at 10-sec intervals
@@ -23,8 +23,7 @@ uv run train_pytorch.py
 uv run python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. inference.proto
 
 # Start a server manually
-uv run server_fastapi.py          # or --port NNNN
-uv run server_flask.py
+uv run server_fastapi.py          # or --port NNNN --workers 4
 uv run server_grpc.py
 
 # Run the full benchmark (starts/stops servers automatically)
@@ -34,7 +33,7 @@ uv run load_test.py --server all --duration 20 --concurrency 10
 uv run load_test.py --server grpc --duration 30 --concurrency 20
 ```
 
-`load_test.py` flags: `--server [fastapi|flask|grpc|all]`, `--duration` (seconds), `--concurrency` (async workers), `--port` (default 8000).
+`load_test.py` flags: `--server [fastapi|grpc|all]`, `--duration` (seconds), `--concurrency` (async workers), `--port` (default 8000).
 
 No test framework or linter is configured.
 
@@ -49,9 +48,8 @@ No test framework or linter is configured.
 - Trains 20 epochs with Adam, saves to `models/pytorch_model.pt`
 
 ### Server layer
-All servers load the model at startup and expose predict + health:
-- `server_fastapi.py` — FastAPI + Pydantic + Uvicorn (async); `GET /health`, `POST /predict`
-- `server_flask.py` — Flask + Gunicorn (1 worker, 4 threads, WSGI); same HTTP endpoints
+Both servers load the model at startup and expose predict + health:
+- `server_fastapi.py` — FastAPI + Uvicorn (async, orjson responses, inference offloaded to thread pool); `GET /health`, `POST /predict`; supports `--workers N` for multi-process
 - `server_grpc.py` — gRPC threadpool (4 workers); `Inference.Predict` + `Inference.Health` RPCs; proto in `inference.proto`, stubs in `inference_pb2.py` / `inference_pb2_grpc.py`
 
 Single: HTTP `POST /predict` → `{"history": [{lat,lon,speed,course_sin,course_cos}×30]}` → `{"prediction": [[lat,lon]×15]}`
