@@ -1,0 +1,62 @@
+services:
+
+  # -------------------------------------------------------------------------
+  # Infrastructure
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -------------------------------------------------------------------------
+  # Inference servers
+  # -------------------------------------------------------------------------
+
+  # Original FastAPI server — synchronous inference in the request handler
+  fastapi:
+    build: .
+    command: python server_fastapi.py --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # FastAPI + RQ server — enqueues jobs to Redis, polls for results
+  fastapi-rq:
+    build: .
+    command: python server_fastapi_rq.py --host 0.0.0.0 --port 8001 --redis-url redis://redis:6379
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./models:/app/models:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # -------------------------------------------------------------------------
+  # RQ worker — consumes jobs from the "inference" queue
+  # -------------------------------------------------------------------------
+  rq-worker:
+    build: .
+    command: rq worker inference --url redis://redis:6379
+    volumes:
+      - ./models:/app/models:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Scale workers with: docker compose up --scale rq-worker=4

@@ -29,7 +29,16 @@ from model_def import HISTORY_STEPS
 # CLI
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="Vessel track inference load test")
-parser.add_argument("--server", choices=["fastapi", "grpc", "all"], default="all")
+parser.add_argument(
+    "--server",
+    choices=["fastapi", "grpc", "fastapi_rq", "all"],
+    default="all",
+    help=(
+        "Server to benchmark. 'fastapi_rq' requires Redis and an rq worker to be "
+        "running (start with docker compose up redis rq-worker, then use --no-spawn "
+        "or let load_test spawn the FastAPI-RQ server)."
+    ),
+)
 parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--duration", type=int, default=20, help="Test duration in seconds")
@@ -83,7 +92,11 @@ GRPC_REQUEST = inference_pb2.PredictBatchRequest(vessels=[_grpc_single] * BATCH_
 # Server lifecycle
 # ---------------------------------------------------------------------------
 def start_server(server: str, host: str, port: int) -> subprocess.Popen:
-    scripts = {"fastapi": "server_fastapi.py", "grpc": "server_grpc.py"}
+    scripts = {
+        "fastapi": "server_fastapi.py",
+        "grpc": "server_grpc.py",
+        "fastapi_rq": "server_fastapi_rq.py",
+    }
     cmd = [sys.executable, scripts[server], "--host", host, "--port", str(port)]
     return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -336,6 +349,8 @@ def _print_summary(results: list[dict]):
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # "all" covers the original servers; fastapi_rq must be requested explicitly
+    # because it requires external services (Redis + rq worker)
     servers = ["fastapi", "grpc"] if args.server == "all" else [args.server]
 
     results = []
