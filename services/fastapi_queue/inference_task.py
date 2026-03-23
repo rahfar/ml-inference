@@ -18,14 +18,15 @@ _MODEL_PATH = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "models", "pytorch_model.pt")
 )
 
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 _model: VesselTrackPredictor | None = None
 
 
 def _get_model() -> VesselTrackPredictor:
     global _model
     if _model is None:
-        _model = VesselTrackPredictor()
-        _model.load_state_dict(torch.load(_MODEL_PATH, weights_only=True))
+        _model = VesselTrackPredictor().to(_DEVICE)
+        _model.load_state_dict(torch.load(_MODEL_PATH, weights_only=True, map_location=_DEVICE))
         _model.eval()
     return _model
 
@@ -48,5 +49,5 @@ def predict_batch(vessels: list[dict]) -> list[list[list[float]]]:
         dtype=np.float32,
     )
     with torch.no_grad():
-        x = torch.tensor(histories, dtype=torch.float32)
+        x = torch.tensor(histories, dtype=torch.float32).to(_DEVICE)
         return model(x).tolist()

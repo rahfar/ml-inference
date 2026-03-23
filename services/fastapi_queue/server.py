@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from fastapi import FastAPI, HTTPException, Request, Response
 from redis import Redis
 from rq import Queue
+from rq.job import JobStatus
 
 try:
     import orjson
@@ -63,15 +64,19 @@ if DEFAULT_RESPONSE is not None:
 app = FastAPI(title="Vessel Track Inference (Queue)", version="1.0", **app_kwargs)
 
 
-async def _wait_for_job(job, poll_interval: float = 0.002):
-    """Async-poll Redis until the job result is available."""
+async def _wait_for_job(job, poll_interval: float = 0.005):
+    """Async-poll Redis until the job result is available.
+
+    Uses job.get_status() rather than job.result directly — in RQ 2.x
+    job.result raises NoSuchJobError while the job is still queued/running.
+    """
     deadline = time.monotonic() + args.job_timeout
     while time.monotonic() < deadline:
-        job.refresh()
-        if job.result is not None:
+        status = job.get_status()  # single Redis call, refreshes internally
+        if status == JobStatus.FINISHED:
             return job.result
-        if job.is_failed:
-            raise HTTPException(status_code=500, detail="Inference job failed")
+        if status in (JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELED):
+            raise HTTPException(status_code=500, detail=f"Inference job {status.value}")
         await asyncio.sleep(poll_interval)
     raise HTTPException(status_code=504, detail="Inference job timed out")
 

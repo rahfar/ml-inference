@@ -36,20 +36,21 @@ args = parser.parse_args()
 # ---------------------------------------------------------------------------
 # Model loading
 # ---------------------------------------------------------------------------
-_model = VesselTrackPredictor()
-_model.load_state_dict(torch.load(_MODEL_PATH, weights_only=True))
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+_model = VesselTrackPredictor().to(_DEVICE)
+_model.load_state_dict(torch.load(_MODEL_PATH, weights_only=True, map_location=_DEVICE))
 _model.eval()
 
 
 def _predict(history: np.ndarray) -> list[list[float]]:
     with torch.no_grad():
-        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0)
+        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0).to(_DEVICE)
         return _model(x).squeeze(0).tolist()
 
 
 def _predict_batch(histories: np.ndarray) -> list[list[list[float]]]:
     with torch.no_grad():
-        x = torch.tensor(histories, dtype=torch.float32)
+        x = torch.tensor(histories, dtype=torch.float32).to(_DEVICE)
         return _model(x).tolist()
 
 

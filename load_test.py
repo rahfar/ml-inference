@@ -30,10 +30,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "services", "grpc"))
 
 import grpc
 import httpx
-import psutil
-
 import inference_pb2
 import inference_pb2_grpc
+import psutil
+
 from model_def import HISTORY_STEPS
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,9 @@ parser.add_argument(
 parser.add_argument("--host", default="127.0.0.1")
 parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--duration", type=int, default=20, help="Test duration in seconds")
-parser.add_argument("--concurrency", type=int, default=10, help="Concurrent async workers")
+parser.add_argument(
+    "--concurrency", type=int, default=10, help="Concurrent async workers"
+)
 parser.add_argument("--redis-url", default="redis://localhost:6379")
 parser.add_argument(
     "--no-spawn",
@@ -100,8 +102,8 @@ GRPC_REQUEST = inference_pb2.PredictBatchRequest(vessels=[_grpc_single] * BATCH_
 # ---------------------------------------------------------------------------
 @dataclass
 class ServerHandle:
-    procs: list[subprocess.Popen]   # all processes to kill on teardown
-    monitor_pid: int                 # PID to sample for CPU/memory stats
+    procs: list[subprocess.Popen]  # all processes to kill on teardown
+    monitor_pid: int  # PID to sample for CPU/memory stats
 
 
 _SERVER_SCRIPTS = {
@@ -118,7 +120,9 @@ def start_server(server: str, host: str, port: int) -> ServerHandle:
     if server == "fastapi_queue":
         cmd += ["--redis-url", args.redis_url]
 
-    srv_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    srv_proc = subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
     if server == "fastapi_queue":
         worker_cmd = [
@@ -127,11 +131,17 @@ def start_server(server: str, host: str, port: int) -> ServerHandle:
             "--redis-url",
             args.redis_url,
         ]
-        worker_proc = subprocess.Popen(
-            worker_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        # 1 workers matches fastapi_direct's thread-pool size and grpc's executor size
+        worker_procs = [
+            subprocess.Popen(
+                worker_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            for _ in range(1)
+        ]
+        # Monitor the first worker as a representative sample
+        return ServerHandle(
+            procs=[srv_proc, *worker_procs], monitor_pid=worker_procs[0].pid
         )
-        # Monitor the worker — that's where inference (CPU/memory) actually happens
-        return ServerHandle(procs=[srv_proc, worker_proc], monitor_pid=worker_proc.pid)
 
     return ServerHandle(procs=[srv_proc], monitor_pid=srv_proc.pid)
 
@@ -168,13 +178,17 @@ def wait_ready_grpc(host: str, port: int, timeout: float = 30.0):
                 return
         except Exception:
             time.sleep(0.2)
-    raise TimeoutError(f"gRPC server at {host}:{port} did not become ready within {timeout}s")
+    raise TimeoutError(
+        f"gRPC server at {host}:{port} did not become ready within {timeout}s"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Process monitor (background thread)
 # ---------------------------------------------------------------------------
-def monitor_process(pid: int, interval: float, stop_event: threading.Event, samples: list):
+def monitor_process(
+    pid: int, interval: float, stop_event: threading.Event, samples: list
+):
     try:
         proc = psutil.Process(pid)
         proc.cpu_percent()  # first call initialises the counter
@@ -235,7 +249,9 @@ async def load_grpc(host: str, port: int, concurrency: int, duration: float):
                 except Exception:
                     errors += 1
 
-        await asyncio.gather(*[asyncio.create_task(worker()) for _ in range(concurrency)])
+        await asyncio.gather(
+            *[asyncio.create_task(worker()) for _ in range(concurrency)]
+        )
         elapsed = time.monotonic() - start
 
     return latencies, errors, elapsed
@@ -257,7 +273,9 @@ def run_benchmark(server: str) -> dict:
 
     print(f"\n{'=' * 60}")
     print(f"  {label}")
-    print(f"  Duration={args.duration}s  Concurrency={args.concurrency}  Batch={BATCH_SIZE}")
+    print(
+        f"  Duration={args.duration}s  Concurrency={args.concurrency}  Batch={BATCH_SIZE}"
+    )
     print(f"{'=' * 60}")
 
     handle = None
@@ -346,6 +364,7 @@ def run_benchmark(server: str) -> dict:
     _print_result(result)
     if args.json:
         import json
+
         print(json.dumps(result))
     return result
 
@@ -389,7 +408,9 @@ def _print_summary(results: list[dict]):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     servers = (
-        ["fastapi_direct", "fastapi_queue", "grpc"] if args.server == "all" else [args.server]
+        ["fastapi_direct", "fastapi_queue", "grpc"]
+        if args.server == "all"
+        else [args.server]
     )
 
     results = []

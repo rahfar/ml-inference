@@ -40,12 +40,13 @@ args = parser.parse_args()
 # ---------------------------------------------------------------------------
 # Model loading
 # ---------------------------------------------------------------------------
-_model = VesselTrackPredictor()
-_model.load_state_dict(torch.load(_MODEL_PATH, weights_only=True))
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+_model = VesselTrackPredictor().to(_DEVICE)
+_model.load_state_dict(torch.load(_MODEL_PATH, weights_only=True, map_location=_DEVICE))
 _model.eval()
 
 # PyTorch releases the GIL during inference, so threads achieve real parallelism.
-_pool = ThreadPoolExecutor(max_workers=1)
+_pool = ThreadPoolExecutor(max_workers=4)
 
 try:
     import orjson
@@ -63,13 +64,13 @@ except ImportError:
 
 def _predict_batch_sync(histories: np.ndarray) -> list:
     with torch.no_grad():
-        x = torch.tensor(histories, dtype=torch.float32)
+        x = torch.tensor(histories, dtype=torch.float32).to(_DEVICE)
         return _model(x).tolist()
 
 
 def _predict_sync(history: np.ndarray) -> list:
     with torch.no_grad():
-        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0)
+        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0).to(_DEVICE)
         return _model(x).squeeze(0).tolist()
 
 
@@ -93,7 +94,10 @@ async def predict(request: Request):
     body = await request.json()
     history = body["history"]
     x = np.array(
-        [[p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]] for p in history],
+        [
+            [p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]]
+            for p in history
+        ],
         dtype=np.float32,
     )
     loop = asyncio.get_running_loop()
@@ -107,7 +111,10 @@ async def predict_batch(request: Request):
     vessels = body["vessels"]
     histories = np.array(
         [
-            [[p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]] for p in v["history"]]
+            [
+                [p["lat"], p["lon"], p["speed"], p["course_sin"], p["course_cos"]]
+                for p in v["history"]
+            ]
             for v in vessels
         ],
         dtype=np.float32,
