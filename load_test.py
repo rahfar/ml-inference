@@ -127,21 +127,15 @@ def start_server(server: str, host: str, port: int) -> ServerHandle:
     if server == "fastapi_queue":
         worker_cmd = [
             sys.executable,
-            "services/fastapi_queue/rq_worker.py",
+            "services/fastapi_queue/async_worker.py",
             "--redis-url",
             args.redis_url,
+            "--threads", "4",
         ]
-        # 1 workers matches fastapi_direct's thread-pool size and grpc's executor size
-        worker_procs = [
-            subprocess.Popen(
-                worker_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            for _ in range(1)
-        ]
-        # Monitor the first worker as a representative sample
-        return ServerHandle(
-            procs=[srv_proc, *worker_procs], monitor_pid=worker_procs[0].pid
+        worker_proc = subprocess.Popen(
+            worker_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
+        return ServerHandle(procs=[srv_proc, worker_proc], monitor_pid=worker_proc.pid)
 
     return ServerHandle(procs=[srv_proc], monitor_pid=srv_proc.pid)
 

@@ -1,11 +1,14 @@
-"""FastAPI inference server backed by a Redis/RQ job queue.
+"""FastAPI inference server backed by a Redis job queue (custom async implementation).
 
-Each request is enqueued as an RQ job; the server async-polls Redis for the
-result and returns it synchronously to the caller. End-to-end latency captures
-the full queue overhead, making it directly comparable to the direct server.
+Each request is enqueued with RPUSH; the server then does a single BLPOP on the
+result key — no polling loop, no sleep overhead. The worker (async_worker.py)
+does the symmetric BLPOP on the jobs queue and LPUSH on the result key.
 
-Requires a running Redis instance and at least one RQ worker:
-    python services/fastapi_queue/rq_worker.py
+Redis ops per request: 2 on the server (RPUSH + BLPOP), 3 on the worker
+(BLPOP + LPUSH + EXPIRE) — 5 total vs RQ's ~15+ bookkeeping calls.
+
+Requires a running Redis instance and the async worker:
+    python services/fastapi_queue/async_worker.py
 
 Usage:
     python services/fastapi_queue/server.py
@@ -13,17 +16,15 @@ Usage:
 """
 
 import argparse
-import asyncio
 import os
+import pickle
 import sys
-import time
+import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from redis import Redis
-from rq import Queue
-from rq.job import JobStatus
+from redis.asyncio import Redis
 
 try:
     import orjson
@@ -41,18 +42,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-parser = argparse.ArgumentParser(description="FastAPI + RQ inference server")
+parser = argparse.ArgumentParser(description="FastAPI + async Redis queue inference server")
 parser.add_argument("--host", default="0.0.0.0")
 parser.add_argument("--port", type=int, default=8000)
 parser.add_argument("--redis-url", default="redis://localhost:6379")
 parser.add_argument("--job-timeout", type=int, default=30)
 args = parser.parse_args()
 
-# ---------------------------------------------------------------------------
-# Queue
-# ---------------------------------------------------------------------------
-_redis = Redis.from_url(args.redis_url)
-_queue = Queue(connection=_redis)
+JOBS_KEY = "inference:jobs"
 
 # ---------------------------------------------------------------------------
 # App
@@ -63,22 +60,34 @@ if DEFAULT_RESPONSE is not None:
 
 app = FastAPI(title="Vessel Track Inference (Queue)", version="1.0", **app_kwargs)
 
+_redis: Redis | None = None
 
-async def _wait_for_job(job, poll_interval: float = 0.005):
-    """Async-poll Redis until the job result is available.
 
-    Uses job.get_status() rather than job.result directly — in RQ 2.x
-    job.result raises NoSuchJobError while the job is still queued/running.
-    """
-    deadline = time.monotonic() + args.job_timeout
-    while time.monotonic() < deadline:
-        status = job.get_status()  # single Redis call, refreshes internally
-        if status == JobStatus.FINISHED:
-            return job.result
-        if status in (JobStatus.FAILED, JobStatus.STOPPED, JobStatus.CANCELED):
-            raise HTTPException(status_code=500, detail=f"Inference job {status.value}")
-        await asyncio.sleep(poll_interval)
-    raise HTTPException(status_code=504, detail="Inference job timed out")
+@app.on_event("startup")
+async def startup():
+    global _redis
+    _redis = Redis.from_url(args.redis_url)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    if _redis:
+        await _redis.aclose()
+
+
+async def _enqueue_and_wait(vessels: list) -> list:
+    job_id = uuid.uuid4().hex
+    payload = pickle.dumps({"id": job_id, "vessels": vessels})
+    result_key = f"inference:result:{job_id}"
+
+    await _redis.rpush(JOBS_KEY, payload)
+
+    # BLPOP blocks until the worker pushes the result — no polling, no sleep
+    item = await _redis.blpop(result_key, timeout=args.job_timeout)
+    if item is None:
+        raise HTTPException(status_code=504, detail="Inference job timed out")
+
+    return pickle.loads(item[1])
 
 
 @app.get("/health")
@@ -89,24 +98,14 @@ async def health():
 @app.post("/predict")
 async def predict(request: Request):
     body = await request.json()
-    job = _queue.enqueue(
-        "services.fastapi_queue.inference_task.predict_batch",
-        [{"history": body["history"]}],
-        job_timeout=args.job_timeout,
-    )
-    predictions = await _wait_for_job(job)
+    predictions = await _enqueue_and_wait([{"history": body["history"]}])
     return {"prediction": predictions[0]}
 
 
 @app.post("/predict_batch")
 async def predict_batch(request: Request):
     body = await request.json()
-    job = _queue.enqueue(
-        "services.fastapi_queue.inference_task.predict_batch",
-        body["vessels"],
-        job_timeout=args.job_timeout,
-    )
-    predictions = await _wait_for_job(job)
+    predictions = await _enqueue_and_wait(body["vessels"])
     return {"predictions": predictions}
 
 

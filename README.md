@@ -111,15 +111,15 @@ Batch size is fixed at 100 vessels/request (`BATCH_SIZE` in `load_test.py`).
 
 Linux x86_64, Python 3.12, client and server on the same machine.
 30 s duration, 10 concurrent workers, 100 vessels/request.
-CPU/memory for `fastapi_queue` sampled from one representative **worker process** (2 workers total).
+`fastapi_queue` CPU/memory sampled from the **async worker process** (1 process, 4 inference threads).
 
 **CUDA**
 
 | Server            |    req/s | vessels/s |  p50 ms |  p95 ms |  p99 ms |  max ms | Mem (avg) | CPU (avg) |
 | ----------------- | -------: | --------: | ------: | ------: | ------: | ------: | --------: | --------: |
-| fastapi_direct    |    186.5 |    18 646 |   51.09 |   73.73 |   82.27 |  177.53 |    856 MB |    112.0% |
-| fastapi_queue     |     91.2 |     9 123 |  106.36 |  116.23 |  121.46 | 1092.22 |    818 MB |     17.8% |
-| **grpc**          | **403.4**| **40 343**| **23.46**| **36.73**| **39.64**| **75.13**| **837 MB** | **125.6%** |
+| fastapi_direct    |    175.2 |    17 517 |   54.16 |   78.57 |   91.59 |  142.63 |    856 MB |    112.9% |
+| fastapi_queue     |    182.8 |    18 275 |   54.01 |   71.94 |   82.17 |  557.55 |    838 MB |     65.7% |
+| **grpc**          | **377.3**| **37 735**| **24.84**| **39.57**| **44.67**| **83.54**| **836 MB** | **127.6%** |
 
 **CPU only** (`CUDA_VISIBLE_DEVICES=""`)
 
@@ -128,6 +128,8 @@ CPU/memory for `fastapi_queue` sampled from one representative **worker process*
 | fastapi_direct    |    128.3 |    12 834 |   76.15 |  103.98 |  115.76 |  148.99 |    643 MB |    516.8% |
 | fastapi_queue     |     82.7 |     8 273 |  116.23 |  157.19 |  192.48 |  803.28 |    549 MB |    500.3% |
 | **grpc**          | **193.6**| **19 359**| **50.13**| **64.52**| **72.94**| **107.43**| **618 MB** | **768.0%** |
+
+> CPU numbers use the original RQ-based worker. Re-run with `CUDA_VISIBLE_DEVICES=""` to reproduce.
 
 ### Remote VPS benchmark (client → server over network)
 
@@ -159,13 +161,27 @@ gRPC achieves **403 req/s** (CUDA) and **194 req/s** (CPU), consistently leading
 
 On CUDA, gRPC jumps from 194 → 403 req/s (2.1×) and FastAPI direct from 128 → 187 req/s (1.5×). The queue server gains less (83 → 91 req/s, 1.1×) because its bottleneck is Redis round trips, not inference compute — adding GPU doesn't help what isn't the bottleneck. CPU usage on CUDA drops to ~12–13% (from 500–770%) confirming the GPU absorbs the matrix work.
 
-### FastAPI + job queue costs ~35–55% throughput vs direct
+### FastAPI + async queue matches FastAPI direct
 
-With `SimpleWorker` (in-process, model loaded once per worker) and 2 parallel workers, the queue server reaches **91 req/s** (CUDA) and **83 req/s** (CPU) — roughly half the direct server. The overhead is three unavoidable Redis round trips per request: enqueue, status poll(s), and result fetch. p99 latency is tight at 121–192 ms, but the `max` spike (~0.8–1 s) reflects the first-job cold start when a worker loads the model.
+The queue server reaches **183 req/s** on CUDA — within noise of FastAPI direct's **175 req/s** — with identical p50 latency (54 ms). The key was replacing RQ with a custom async implementation:
 
-**Implementation note:** RQ's default `Worker` forks a new subprocess per job, reloading the model from disk every time and breaking the lazy-load cache. Switching to `SimpleWorker` keeps the model resident, recovering performance from ~4 req/s to ~83–91 req/s.
+| Implementation | req/s | p50 ms | what changed |
+|---|---|---|---|
+| RQ `Worker` (forking) | 3.7 | 6 054 | baseline |
+| RQ `SimpleWorker` | 91 | 106 | no fork → model cached |
+| Custom async + BLPOP | 183 | 54 | no framework overhead |
 
-The queue pattern is justified when **decoupling** matters — fire-and-forget submission, retries, priority routing, or bursting to distributed workers — but adds avoidable latency for synchronous inference where FastAPI direct or gRPC are simpler and faster.
+**Why RQ was slow:**
+- Default `Worker` forks a subprocess per job → model reloaded from disk every ~5 ms inference call
+- `SimpleWorker` fixes the fork but still runs ~15 Redis bookkeeping operations per job (status, registry, heartbeat, result TTL)
+- Server polls every 5 ms with `get_status()` → average 2.5 ms wasted sleep per request
+
+**Why the custom implementation is fast:**
+- Worker: `BLPOP jobs → run_in_executor(inference) → LPUSH result` — **5 Redis ops** total vs RQ's 15+
+- Server: `RPUSH job → BLPOP result` — truly blocking wait, **zero polling overhead**
+- Single async worker process with a 4-thread executor handles concurrent jobs without spawning processes
+
+The queue pattern is justified when **decoupling** matters — fire-and-forget submission, retries, priority routing, or bursting to distributed workers — and this implementation shows it doesn't have to cost anything in throughput or latency.
 
 ### Network latency dominates in remote benchmarks
 
