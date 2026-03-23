@@ -1,11 +1,17 @@
 """gRPC inference server.
 
 Usage:
-    python server_grpc.py
-    python server_grpc.py --port 8001
+    python services/grpc/server.py
+    python services/grpc/server.py --port 8001
 """
+
 import argparse
 import concurrent.futures
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.dirname(__file__))  # for inference_pb2 stubs
 
 import grpc
 import numpy as np
@@ -14,6 +20,10 @@ import torch
 import inference_pb2
 import inference_pb2_grpc
 from model_def import VesselTrackPredictor
+
+_MODEL_PATH = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "models", "pytorch_model.pt")
+)
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -27,22 +37,20 @@ args = parser.parse_args()
 # Model loading
 # ---------------------------------------------------------------------------
 _model = VesselTrackPredictor()
-_model.load_state_dict(torch.load("models/pytorch_model.pt", weights_only=True))
+_model.load_state_dict(torch.load(_MODEL_PATH, weights_only=True))
 _model.eval()
 
 
 def _predict(history: np.ndarray) -> list[list[float]]:
-    """history: (30, 5) → [[lat, lon], ...] × 15"""
     with torch.no_grad():
-        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0)  # (1, 30, 5)
-        return _model(x).squeeze(0).tolist()  # (15, 2)
+        x = torch.tensor(history, dtype=torch.float32).unsqueeze(0)
+        return _model(x).squeeze(0).tolist()
 
 
 def _predict_batch(histories: np.ndarray) -> list[list[list[float]]]:
-    """histories: (N, 30, 5) → N × [[lat, lon], ...] × 15"""
     with torch.no_grad():
-        x = torch.tensor(histories, dtype=torch.float32)  # (N, 30, 5)
-        return _model(x).tolist()  # (N, 15, 2)
+        x = torch.tensor(histories, dtype=torch.float32)
+        return _model(x).tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -51,21 +59,17 @@ def _predict_batch(histories: np.ndarray) -> list[list[list[float]]]:
 class InferenceServicer(inference_pb2_grpc.InferenceServicer):
     def Predict(self, request, context):
         history = np.array(
-            [[p.lat, p.lon, p.speed, p.course_sin, p.course_cos]
-             for p in request.history],
+            [[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in request.history],
             dtype=np.float32,
         )
         result = _predict(history)
         return inference_pb2.PredictResponse(
-            prediction=[
-                inference_pb2.FuturePoint(lat=pt[0], lon=pt[1]) for pt in result
-            ]
+            prediction=[inference_pb2.FuturePoint(lat=pt[0], lon=pt[1]) for pt in result]
         )
 
     def PredictBatch(self, request, context):
         histories = np.array(
-            [[[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in v.history]
-             for v in request.vessels],
+            [[[p.lat, p.lon, p.speed, p.course_sin, p.course_cos] for p in v.history] for v in request.vessels],
             dtype=np.float32,
         )
         results = _predict_batch(histories)
