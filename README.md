@@ -109,15 +109,25 @@ Batch size is fixed at 100 vessels/request (`BATCH_SIZE` in `load_test.py`).
 
 ### Local benchmark (2026-03-23)
 
-Environment: Linux x86_64, Python 3.12 + CUDA, client and server on the same machine.
+Linux x86_64, Python 3.12, client and server on the same machine.
 30 s duration, 10 concurrent workers, 100 vessels/request.
-CPU/memory for `fastapi_queue` sampled from one representative **worker process** (4 workers total).
+CPU/memory for `fastapi_queue` sampled from one representative **worker process** (2 workers total).
+
+**CUDA**
 
 | Server            |    req/s | vessels/s |  p50 ms |  p95 ms |  p99 ms |  max ms | Mem (avg) | CPU (avg) |
 | ----------------- | -------: | --------: | ------: | ------: | ------: | ------: | --------: | --------: |
 | fastapi_direct    |    186.5 |    18 646 |   51.09 |   73.73 |   82.27 |  177.53 |    856 MB |    112.0% |
 | fastapi_queue     |     91.2 |     9 123 |  106.36 |  116.23 |  121.46 | 1092.22 |    818 MB |     17.8% |
 | **grpc**          | **403.4**| **40 343**| **23.46**| **36.73**| **39.64**| **75.13**| **837 MB** | **125.6%** |
+
+**CPU only** (`CUDA_VISIBLE_DEVICES=""`)
+
+| Server            |    req/s | vessels/s |  p50 ms |  p95 ms |  p99 ms |  max ms | Mem (avg) | CPU (avg) |
+| ----------------- | -------: | --------: | ------: | ------: | ------: | ------: | --------: | --------: |
+| fastapi_direct    |    128.3 |    12 834 |   76.15 |  103.98 |  115.76 |  148.99 |    643 MB |    516.8% |
+| fastapi_queue     |     82.7 |     8 273 |  116.23 |  157.19 |  192.48 |  803.28 |    549 MB |    500.3% |
+| **grpc**          | **193.6**| **19 359**| **50.13**| **64.52**| **72.94**| **107.43**| **618 MB** | **768.0%** |
 
 ### Remote VPS benchmark (client → server over network)
 
@@ -141,21 +151,21 @@ gRPC response payloads are **1.7× smaller** (100 × 15 waypoints × 2 floats).
 
 ## Observations
 
-### gRPC is 2× faster than FastAPI direct
+### gRPC is the fastest across both CPU and CUDA
 
-gRPC achieves **403 req/s** vs FastAPI's **187 req/s** — a 2.2× throughput advantage, with p50 latency of 23 ms vs 51 ms. HTTP/2 multiplexing, binary framing, and protobuf's compact encoding all contribute, but the primary driver is gRPC's 4-thread executor keeping more cores busy simultaneously.
+gRPC achieves **403 req/s** (CUDA) and **194 req/s** (CPU), consistently leading by ~2× over FastAPI direct. HTTP/2 multiplexing, binary framing, and protobuf's compact encoding all contribute, but the primary driver is gRPC's 4-thread executor keeping more cores busy simultaneously.
 
-CPU is proportionally higher for gRPC (126% vs 112% per monitored process) because it is actually doing more work per second, not burning cycles wastefully.
+### CUDA gives ~1.5–2× uplift, but only where the bottleneck is compute
 
-### FastAPI + job queue costs ~2× vs direct in throughput
+On CUDA, gRPC jumps from 194 → 403 req/s (2.1×) and FastAPI direct from 128 → 187 req/s (1.5×). The queue server gains less (83 → 91 req/s, 1.1×) because its bottleneck is Redis round trips, not inference compute — adding GPU doesn't help what isn't the bottleneck. CPU usage on CUDA drops to ~12–13% (from 500–770%) confirming the GPU absorbs the matrix work.
 
-With `SimpleWorker` (in-process, model loaded once per worker) and 4 parallel workers, the queue server reaches **91 req/s** — about half of FastAPI direct. The overhead comes from three unavoidable Redis round trips per request: enqueue, status poll(s), and result fetch. p50 latency is 106 ms vs 51 ms for direct; p99 is tight at 121 ms, but the occasional cold-start penalty shows in the `max` spike (~1 s) when a worker loads the model on its first job.
+### FastAPI + job queue costs ~35–55% throughput vs direct
 
-The worker CPU (18% per process × 4 workers ≈ 72% total) shows the compute is genuinely distributed — workers are active, not idle.
+With `SimpleWorker` (in-process, model loaded once per worker) and 2 parallel workers, the queue server reaches **91 req/s** (CUDA) and **83 req/s** (CPU) — roughly half the direct server. The overhead is three unavoidable Redis round trips per request: enqueue, status poll(s), and result fetch. p99 latency is tight at 121–192 ms, but the `max` spike (~0.8–1 s) reflects the first-job cold start when a worker loads the model.
 
-**Implementation note:** RQ's default `Worker` forks a new subprocess per job, which causes the model to be reloaded from disk on every request (breaking the lazy-load cache). Using `SimpleWorker` eliminates the fork and keeps the model resident, recovering performance from ~4 req/s to ~91 req/s.
+**Implementation note:** RQ's default `Worker` forks a new subprocess per job, reloading the model from disk every time and breaking the lazy-load cache. Switching to `SimpleWorker` keeps the model resident, recovering performance from ~4 req/s to ~83–91 req/s.
 
-The queue pattern is justified when **decoupling** matters — fire-and-forget submission, retries, priority routing, or bursting to many distributed workers — but adds unnecessary latency for synchronous, latency-sensitive inference where FastAPI direct or gRPC are simpler and faster.
+The queue pattern is justified when **decoupling** matters — fire-and-forget submission, retries, priority routing, or bursting to distributed workers — but adds avoidable latency for synchronous inference where FastAPI direct or gRPC are simpler and faster.
 
 ### Network latency dominates in remote benchmarks
 
