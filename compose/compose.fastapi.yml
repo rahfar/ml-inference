@@ -1,0 +1,14 @@
+services:
+  fastapi:
+    build:
+      context: ..
+      dockerfile: servers/fastapi/Dockerfile
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./model/weights:/app/weights:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      retries: 5
+      start_period: 10s

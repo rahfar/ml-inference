@@ -39,7 +39,7 @@ def get_model() -> VesselTrackPredictor:
 
 
 class PredictRequest(BaseModel):
-    input: list[float]
+    input: list[list[float]]  # batch of samples, each 150 floats
 
 
 # Job storage
@@ -63,15 +63,16 @@ async def _worker():
     while True:
         job_id, data = await _queue.get()
         try:
+            batch_size = len(data)
             arr = np.array(data, dtype=np.float32).reshape(
-                1, HISTORY_STEPS, HISTORY_FEATURES
+                batch_size, HISTORY_STEPS, HISTORY_FEATURES
             )
             with torch.inference_mode():
                 tensor = torch.from_numpy(arr).to(DEVICE)
-                out = get_model()(tensor).squeeze(0).cpu()
+                out = get_model()(tensor).cpu()
             _results[job_id] = {
                 "status": "done",
-                "output": out.flatten().tolist(),
+                "output": [sample.flatten().tolist() for sample in out],
             }
         except Exception as e:
             _results[job_id] = {"status": "error", "detail": str(e)}

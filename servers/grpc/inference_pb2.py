@@ -4,34 +4,41 @@
 # source: inference.proto
 # Protobuf Python Version: 6.31.1
 """Generated protocol buffer code."""
-
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-
 _runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC, 6, 31, 1, "", "inference.proto"
+    _runtime_version.Domain.PUBLIC,
+    6,
+    31,
+    1,
+    '',
+    'inference.proto'
 )
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x0finference.proto\x12\tinference"\x1f\n\x0ePredictRequest\x12\r\n\x05input\x18\x01 \x03(\x02"5\n\x0fPredictResponse\x12\x0e\n\x06output\x18\x01 \x03(\x02\x12\x12\n\nrequest_id\x18\x02 \x01(\t2T\n\x10InferenceService\x12@\n\x07Predict\x12\x19.inference.PredictRequest\x1a\x1a.inference.PredictResponseb\x06proto3'
-)
+
+
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0finference.proto\x12\tinference\"\x17\n\x06Sample\x12\r\n\x05input\x18\x01 \x03(\x02\"4\n\x0ePredictRequest\x12\"\n\x07samples\x18\x01 \x03(\x0b\x32\x11.inference.Sample\"\x1f\n\rPredictOutput\x12\x0e\n\x06output\x18\x01 \x03(\x02\"P\n\x0fPredictResponse\x12)\n\x07outputs\x18\x01 \x03(\x0b\x32\x18.inference.PredictOutput\x12\x12\n\nrequest_id\x18\x02 \x01(\t2T\n\x10InferenceService\x12@\n\x07Predict\x12\x19.inference.PredictRequest\x1a\x1a.inference.PredictResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "inference_pb2", _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'inference_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-    DESCRIPTOR._loaded_options = None
-    _globals["_PREDICTREQUEST"]._serialized_start = 30
-    _globals["_PREDICTREQUEST"]._serialized_end = 61
-    _globals["_PREDICTRESPONSE"]._serialized_start = 63
-    _globals["_PREDICTRESPONSE"]._serialized_end = 116
-    _globals["_INFERENCESERVICE"]._serialized_start = 118
-    _globals["_INFERENCESERVICE"]._serialized_end = 202
+  DESCRIPTOR._loaded_options = None
+  _globals['_SAMPLE']._serialized_start=30
+  _globals['_SAMPLE']._serialized_end=53
+  _globals['_PREDICTREQUEST']._serialized_start=55
+  _globals['_PREDICTREQUEST']._serialized_end=107
+  _globals['_PREDICTOUTPUT']._serialized_start=109
+  _globals['_PREDICTOUTPUT']._serialized_end=140
+  _globals['_PREDICTRESPONSE']._serialized_start=142
+  _globals['_PREDICTRESPONSE']._serialized_end=222
+  _globals['_INFERENCESERVICE']._serialized_start=224
+  _globals['_INFERENCESERVICE']._serialized_end=308
 # @@protoc_insertion_point(module_scope)

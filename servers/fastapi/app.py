@@ -40,7 +40,7 @@ def get_model() -> VesselTrackPredictor:
 
 
 class PredictRequest(BaseModel):
-    input: list[float]  # flat: 150 floats (30 steps x 5 features)
+    input: list[list[float]]  # batch of samples, each 150 floats (30 steps x 5 features)
 
 
 app = FastAPI(title="FastAPI Inference Server")
@@ -58,13 +58,14 @@ async def health():
 
 @app.post("/predict")
 def predict(body: PredictRequest):
+    batch_size = len(body.input)
     arr = np.array(body.input, dtype=np.float32).reshape(
-        1, HISTORY_STEPS, HISTORY_FEATURES
+        batch_size, HISTORY_STEPS, HISTORY_FEATURES
     )
     with torch.inference_mode():
         tensor = torch.from_numpy(arr).to(DEVICE)
-        out = get_model()(tensor).squeeze(0).cpu()
-    return {"output": out.flatten().tolist()}
+        out = get_model()(tensor).cpu()
+    return {"output": [sample.flatten().tolist() for sample in out]}
 
 
 if __name__ == "__main__":

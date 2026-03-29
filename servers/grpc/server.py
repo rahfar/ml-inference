@@ -41,14 +41,20 @@ def get_model() -> VesselTrackPredictor:
 
 class InferenceServicer(inference_pb2_grpc.InferenceServiceServicer):
     def Predict(self, request, context):
-        arr = np.array(request.input, dtype=np.float32).reshape(
-            1, HISTORY_STEPS, HISTORY_FEATURES
+        batch_size = len(request.samples)
+        flat = [v for sample in request.samples for v in sample.input]
+        arr = np.array(flat, dtype=np.float32).reshape(
+            batch_size, HISTORY_STEPS, HISTORY_FEATURES
         )
         with torch.inference_mode():
             tensor = torch.from_numpy(arr).to(DEVICE)
-            out = get_model()(tensor).squeeze(0).cpu()
+            out = get_model()(tensor).cpu()
+        outputs = [
+            inference_pb2.PredictOutput(output=sample.flatten().tolist())
+            for sample in out
+        ]
         return inference_pb2.PredictResponse(
-            output=out.flatten().tolist(),
+            outputs=outputs,
             request_id=str(uuid.uuid4()),
         )
 

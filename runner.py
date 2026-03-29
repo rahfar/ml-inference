@@ -85,7 +85,11 @@ async def run_all(
             print(f"  {bench_name} -- {server_name}")
             print(f"{'=' * 60}")
             bench = cls(server_name, config)
-            bench_results = await bench.run()
+            await bench.setup()
+            try:
+                bench_results = await bench.run()
+            finally:
+                await bench.teardown()
             results.extend(bench_results)
             for r in bench_results:
                 print(

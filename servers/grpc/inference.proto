@@ -6,11 +6,19 @@ service InferenceService {
   rpc Predict (PredictRequest) returns (PredictResponse);
 }
 
-message PredictRequest {
+message Sample {
   repeated float input = 1;  // flat: 150 floats (30 steps x 5 features)
 }
 
+message PredictRequest {
+  repeated Sample samples = 1;
+}
+
+message PredictOutput {
+  repeated float output = 1;  // flat: 30 floats (15 steps x 2 features)
+}
+
 message PredictResponse {
-  repeated float output = 1;     // flat: 30 floats (15 steps x 2 features)
+  repeated PredictOutput outputs = 1;
   string request_id = 2;
 }

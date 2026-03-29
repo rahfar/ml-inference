@@ -66,14 +66,52 @@ class BaseBench(ABC):
         self.server_name = server_name
         self.config = config
         self.server_cfg = config["servers"][server_name]
+        self._http_client: httpx.AsyncClient | None = None
+        self._grpc_channel = None
+        self._grpc_stub = None
 
     @abstractmethod
     async def run(self) -> list[BenchResult]: ...
 
+    async def setup(self):
+        """Open persistent connections (called before run)."""
+        protocol = self.server_cfg["protocol"]
+        if protocol == "grpc":
+            import grpc.aio
+
+            url = self.server_cfg["url"]
+            self._grpc_channel = grpc.aio.insecure_channel(url)
+            await self._grpc_channel.channel_ready()
+
+            import sys
+            from pathlib import Path
+
+            sys.path.insert(
+                0,
+                str(Path(__file__).resolve().parent.parent / "servers" / "grpc"),
+            )
+            import inference_pb2_grpc  # type: ignore
+
+            self._grpc_stub = inference_pb2_grpc.InferenceServiceStub(
+                self._grpc_channel
+            )
+        else:
+            self._http_client = httpx.AsyncClient(timeout=30)
+
+    async def teardown(self):
+        """Close persistent connections (called after run)."""
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
+        if self._grpc_channel:
+            await self._grpc_channel.close()
+            self._grpc_channel = None
+            self._grpc_stub = None
+
     # -- helpers shared by all benches ----------------------------------------
 
-    def _payload(self) -> list[float]:
-        """Build a flat 150-float input payload."""
+    def _sample(self) -> list[float]:
+        """Build a single flat 150-float sample."""
         return [
             58.0 + i * 0.001
             if j == 0
@@ -87,6 +125,10 @@ class BaseBench(ABC):
             for i in range(30)
             for j in range(5)
         ]
+
+    def _payload(self) -> list[list[float]]:
+        """Build a batch payload (single sample by default)."""
+        return [self._sample()]
 
     async def warmup(self, n: int = 10):
         for _ in range(n):
@@ -104,45 +146,44 @@ class BaseBench(ABC):
 
     async def _send_http(self) -> float:
         url = self.server_cfg["url"]
-        async with httpx.AsyncClient(timeout=30) as client:
-            t0 = time.monotonic()
-            resp = await client.post(f"{url}/predict", json={"input": self._payload()})
-            resp.raise_for_status()
-            return time.monotonic() - t0
+        t0 = time.monotonic()
+        resp = await self._http_client.post(
+            f"{url}/predict", json={"input": self._payload()}
+        )
+        resp.raise_for_status()
+        return time.monotonic() - t0
 
     async def _send_grpc(self) -> float:
         import sys
         from pathlib import Path
 
-        import grpc.aio
-
         sys.path.insert(
             0, str(Path(__file__).resolve().parent.parent / "servers" / "grpc")
         )
         import inference_pb2  # type: ignore
-        import inference_pb2_grpc  # type: ignore
 
-        url = self.server_cfg["url"]
-        async with grpc.aio.insecure_channel(url) as channel:
-            stub = inference_pb2_grpc.InferenceServiceStub(channel)
-            t0 = time.monotonic()
-            await stub.Predict(inference_pb2.PredictRequest(input=self._payload()))
-            return time.monotonic() - t0
+        samples = [inference_pb2.Sample(input=s) for s in self._payload()]
+        t0 = time.monotonic()
+        await self._grpc_stub.Predict(
+            inference_pb2.PredictRequest(samples=samples)
+        )
+        return time.monotonic() - t0
 
     async def _send_queue(self) -> float:
         """Submit + poll loop for the queue server."""
         url = self.server_cfg["url"]
-        async with httpx.AsyncClient(timeout=30) as client:
-            t0 = time.monotonic()
-            resp = await client.post(f"{url}/predict", json={"input": self._payload()})
-            resp.raise_for_status()
-            job_id = resp.json()["job_id"]
-            while True:
-                poll = await client.get(f"{url}/result/{job_id}")
-                poll.raise_for_status()
-                data = poll.json()
-                if data["status"] == "done":
-                    return time.monotonic() - t0
-                if data["status"] == "error":
-                    raise RuntimeError(data.get("detail", "inference error"))
-                await asyncio.sleep(0.002)
+        t0 = time.monotonic()
+        resp = await self._http_client.post(
+            f"{url}/predict", json={"input": self._payload()}
+        )
+        resp.raise_for_status()
+        job_id = resp.json()["job_id"]
+        while True:
+            poll = await self._http_client.get(f"{url}/result/{job_id}")
+            poll.raise_for_status()
+            data = poll.json()
+            if data["status"] == "done":
+                return time.monotonic() - t0
+            if data["status"] == "error":
+                raise RuntimeError(data.get("detail", "inference error"))
+            await asyncio.sleep(0.002)

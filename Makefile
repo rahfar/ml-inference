@@ -1,22 +1,37 @@
 BENCH   ?= latency
 SERVER  ?= all
 
+COMPOSE_FILES := $(wildcard compose/compose.*.yml)
+COMPOSE_FLAGS := $(foreach f,$(COMPOSE_FILES),-f $(f))
+
 style:
 	uv run ruff check --fix --select I .
 	uv run ruff format .
-	
+
 
 build:
-	docker compose -f compose/docker-compose.yml build
+	docker compose $(COMPOSE_FLAGS) build
+
+build-%:
+	docker compose -f compose/compose.$*.yml build
 
 up:
-	docker compose -f compose/docker-compose.yml up -d --wait
+	docker compose $(COMPOSE_FLAGS) up -d --wait
+
+up-%:
+	docker compose -f compose/compose.$*.yml up -d --wait
 
 down:
-	docker compose -f compose/docker-compose.yml down
+	docker compose $(COMPOSE_FLAGS) down
+
+down-%:
+	docker compose -f compose/compose.$*.yml down
 
 logs:
-	docker compose -f compose/docker-compose.yml logs -f
+	docker compose $(COMPOSE_FLAGS) logs -f
+
+logs-%:
+	docker compose -f compose/compose.$*.yml logs -f
 
 bench:
 	python runner.py --bench $(BENCH) --server $(SERVER)
@@ -31,6 +46,6 @@ train:
 	cd model && python train.py
 
 proto:
-	python -m grpc_tools.protoc -I servers/grpc --python_out=servers/grpc --grpc_python_out=servers/grpc servers/grpc/inference.proto
+	uv run python -m grpc_tools.protoc -I servers/grpc --python_out=servers/grpc --grpc_python_out=servers/grpc servers/grpc/inference.proto
 
 .PHONY: build up down logs bench compare bench-all train proto style
