@@ -32,17 +32,25 @@ uv run python services/fastapi_queue/server.py       # --port NNNN --redis-url r
 uv run python services/fastapi_queue/rq_worker.py    # start in a separate terminal
 
 # Run the full benchmark (starts/stops servers automatically)
-uv run load_test.py --server all --duration 20 --concurrency 10
+uv run benchmarks/run.py --server all
+
+# Quick sanity check
+uv run benchmarks/run.py --server grpc --config benchmarks/config/quick.yaml
 
 # Benchmark a single server
-uv run load_test.py --server fastapi_direct --duration 30 --concurrency 20
-uv run load_test.py --server fastapi_queue  --duration 30 --concurrency 20 --redis-url redis://localhost:6379
-uv run load_test.py --server grpc           --duration 30 --concurrency 20
+uv run benchmarks/run.py --server fastapi_direct --duration 30 --concurrency 20
+uv run benchmarks/run.py --server fastapi_queue  --duration 30 --concurrency 20
+uv run benchmarks/run.py --server grpc           --duration 30 --concurrency 20
+
+# Connect to already-running server (no spawn)
+uv run benchmarks/run.py --server fastapi_direct --no-spawn --port 8001
 ```
 
-`load_test.py` flags: `--server [fastapi_direct|fastapi_queue|grpc|all]`, `--duration` (seconds), `--concurrency` (async workers), `--port` (default 8000), `--redis-url` (default redis://localhost:6379).
+`benchmarks/run.py` flags: `--server [fastapi_direct|fastapi_queue|grpc|all]`, `--config` (YAML file, default `benchmarks/config/default.yaml`), `--duration` / `--concurrency` / `--batch-size` (override config), `--no-spawn`, `--no-save`, `--json`.
 
-**fastapi_queue prerequisite:** Redis must be running before the benchmark starts. `load_test.py` spawns the worker automatically.
+Config files live in `benchmarks/config/`. Results are auto-saved to `benchmarks/results/` as timestamped JSON.
+
+**fastapi_queue prerequisite:** Redis must be running before the benchmark starts. `benchmarks/run.py` spawns the worker automatically.
 
 No test framework or linter is configured.
 
@@ -75,9 +83,31 @@ All services expose identical HTTP semantics (fastapi_*):
 
 gRPC: `Inference.Predict` / `Inference.PredictBatch`; proto in `inference.proto`
 
-### Benchmark orchestrator (`load_test.py`)
-1. Spawns server subprocess(es); for `fastapi_queue` also spawns the RQ worker
-2. Polls HTTP `/health` or gRPC `Health` RPC until ready
-3. Drives async load — HTTP via `httpx`, gRPC via `grpc.aio` — at configured concurrency
-4. Background thread samples RSS and CPU via `psutil` every 0.5 s (monitors worker PID for fastapi_queue)
-5. Computes p50/p95/p99/avg/max latency; reports both req/s and vessels/s; prints per-run stats and final summary table
+### Benchmark layer (`benchmarks/`)
+
+```
+benchmarks/
+  run.py                CLI entrypoint
+  config/
+    default.yaml        batch_size, concurrency, duration, timeouts, etc.
+    quick.yaml          fast sanity-check values
+  harness/
+    lifecycle.py        server spawn/teardown, health polling
+    monitor.py          CPU/RSS sampling thread (per-process, by label)
+    payloads.py         build HTTP and gRPC test payloads
+  runners/
+    http_runner.py      httpx async load loop
+    grpc_runner.py      grpc.aio async load loop
+  metrics/
+    stats.py            percentiles (linear interpolation), aggregation
+  results/              auto-saved JSON per run (timestamp + git SHA in filename)
+```
+
+Flow:
+1. Load YAML config; CLI flags override individual keys
+2. Spawn server subprocess(es); for `fastapi_queue` also spawns worker
+3. Poll `/health` or gRPC `Health` until ready; optionally run warmup
+4. Background monitor samples RSS+CPU for each process separately
+5. Drive async load via runner; collect raw latency list
+6. Compute p50/p95/p99 (interpolated), req/s, vessels/s; print summary
+7. Save full result JSON to `benchmarks/results/`

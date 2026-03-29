@@ -14,21 +14,36 @@ Compares inference throughput of a **PyTorch LSTM** vessel track predictor serve
 ## Project structure
 
 ```
-model_def.py          # VesselTrackPredictor + sequence dimension constants
-train_pytorch.py      # synthetic track data generation + LSTM training
-load_test.py          # orchestrator: starts server(s), drives load, prints stats
+model_def.py              # VesselTrackPredictor + sequence dimension constants
+train_pytorch.py          # synthetic track data generation + LSTM training
 services/
   fastapi_direct/
-    server.py         # FastAPI + Uvicorn, inference offloaded to ThreadPoolExecutor
+    server.py             # FastAPI + Uvicorn, inference offloaded to ThreadPoolExecutor
   fastapi_queue/
-    server.py         # FastAPI + Uvicorn, enqueues jobs to Redis, polls for result
-    inference_task.py # RQ job function (model loaded lazily per worker process)
-    rq_worker.py      # RQ worker process launcher
+    server.py             # FastAPI + Uvicorn, enqueues jobs to Redis, blocks for result
+    inference_task.py     # shared inference logic (model loaded lazily)
+    async_worker.py       # async worker: BLPOP jobs → thread-pool inference → LPUSH result
+    rq_worker.py          # original RQ worker (deprecated)
   grpc/
-    server.py         # gRPC server (ThreadPoolExecutor, 4 workers)
-    inference.proto   # Protobuf service definition
-    inference_pb2.py  # generated stubs (grpc_tools.protoc)
+    server.py             # gRPC server (ThreadPoolExecutor, 4 workers)
+    inference.proto       # Protobuf service definition
+    inference_pb2.py      # generated stubs (grpc_tools.protoc)
     inference_pb2_grpc.py
+benchmarks/
+  run.py                  # CLI entrypoint
+  config/
+    default.yaml          # batch_size, concurrency, duration, timeouts, …
+    quick.yaml            # fast sanity-check values
+  harness/
+    lifecycle.py          # server spawn/teardown, health polling
+    monitor.py            # CPU/RSS sampling thread (per-process, by label)
+    payloads.py           # build HTTP and gRPC test payloads
+  runners/
+    http_runner.py        # httpx async load loop
+    grpc_runner.py        # grpc.aio async load loop
+  metrics/
+    stats.py              # percentiles (linear interpolation), aggregation
+  results/                # auto-saved JSON per run (timestamp + git SHA in filename)
 ```
 
 ## Reproduce
@@ -80,30 +95,37 @@ Endpoints:
 # Start Redis first for the queue server
 docker run -d -p 6379:6379 redis:alpine
 
-uv run load_test.py --server all --duration 30 --concurrency 10
+uv run benchmarks/run.py --server all
 ```
 
-Or target one server:
+Or target one server, or use the quick config for a fast sanity check:
 
 ```bash
-uv run load_test.py --server fastapi_direct --duration 30 --concurrency 20
-uv run load_test.py --server fastapi_queue  --duration 30 --concurrency 20
-uv run load_test.py --server grpc           --duration 30 --concurrency 20
+uv run benchmarks/run.py --server fastapi_direct --duration 30 --concurrency 20
+uv run benchmarks/run.py --server fastapi_queue  --duration 30 --concurrency 20
+uv run benchmarks/run.py --server grpc           --duration 30 --concurrency 20
+
+uv run benchmarks/run.py --server grpc --config benchmarks/config/quick.yaml
 ```
 
-### `load_test.py` flags
+Results are automatically saved to `benchmarks/results/<timestamp>_<server>_<git-sha>.json`.
 
-| Flag            | Default                  | Description                              |
-| --------------- | ------------------------ | ---------------------------------------- |
-| `--server`      | `all`                    | `fastapi_direct`, `fastapi_queue`, `grpc`, or `all` |
-| `--duration`    | `20`                     | Test duration in seconds                 |
-| `--concurrency` | `10`                     | Concurrent async workers                 |
-| `--port`        | `8000`                   | Port to bind the server on               |
-| `--host`        | `127.0.0.1`              | Server host                              |
-| `--redis-url`   | `redis://localhost:6379` | Redis URL (fastapi_queue only)           |
-| `--no-spawn`    | off                      | Connect to an already-running server     |
+### `benchmarks/run.py` flags
 
-Batch size is fixed at 100 vessels/request (`BATCH_SIZE` in `load_test.py`).
+| Flag            | Default                         | Description                                         |
+| --------------- | ------------------------------- | --------------------------------------------------- |
+| `--server`      | `all`                           | `fastapi_direct`, `fastapi_queue`, `grpc`, or `all` |
+| `--config`      | `benchmarks/config/default.yaml`| YAML config file                                    |
+| `--duration`    | from config                     | Override test duration (seconds)                    |
+| `--concurrency` | from config                     | Override concurrent async workers                   |
+| `--batch-size`  | from config                     | Override vessels per request                        |
+| `--host`        | `127.0.0.1`                     | Server host                                         |
+| `--port`        | `8000`                          | Server port                                         |
+| `--no-spawn`    | off                             | Connect to an already-running server                |
+| `--no-save`     | off                             | Skip saving results to `benchmarks/results/`        |
+| `--json`        | off                             | Print full JSON results to stdout                   |
+
+All benchmark parameters (batch size, concurrency, duration, worker threads, Redis URL, timeouts) live in `benchmarks/config/default.yaml`.
 
 ## Results
 
@@ -111,7 +133,7 @@ Batch size is fixed at 100 vessels/request (`BATCH_SIZE` in `load_test.py`).
 
 Linux x86_64, Python 3.12, client and server on the same machine.
 30 s duration, 10 concurrent workers, 100 vessels/request.
-`fastapi_queue` CPU/memory sampled from the **async worker process** (1 process, 4 inference threads).
+`fastapi_queue` CPU/memory reported separately for server and worker processes.
 
 **CUDA**
 

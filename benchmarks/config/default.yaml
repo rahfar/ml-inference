@@ -1,0 +1,9 @@
+batch_size: 100
+concurrency: 10
+duration: 30
+warmup: 3
+worker_threads: 4
+redis_url: redis://localhost:6379
+health_timeout: 30
+monitor_interval: 0.5
+request_timeout: 30.0
