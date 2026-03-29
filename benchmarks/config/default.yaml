@@ -1,7 +1,0 @@
-batch_size: 100
-concurrency: 10
-duration: 30
-warmup: 3
-health_timeout: 30
-monitor_interval: 0.5
-request_timeout: 30.0

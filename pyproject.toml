@@ -1,7 +1,7 @@
 [project]
-name = "ml-inference"
+name = "ml-inference-bench"
 version = "0.1.0"
-description = "ML inference benchmark: PyTorch LSTM via FastAPI and gRPC"
+description = "Benchmark and compare three PyTorch serving strategies"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,11 +9,13 @@ dependencies = [
     "numpy",
     "fastapi",
     "uvicorn[standard]",
-    "psutil",
-    "httpx",
     "grpcio",
     "grpcio-tools",
+    "httpx",
     "pyyaml",
+    "rich",
+    "ruff>=0.15.8",
+    "ty>=0.0.26",
 ]
 
 [[tool.uv.index]]

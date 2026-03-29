@@ -1,0 +1,22 @@
+servers:
+  fastapi:
+    url: "http://localhost:8001"
+    protocol: http
+  grpc:
+    url: "localhost:8002"
+    protocol: grpc
+  fastapi_queue:
+    url: "http://localhost:8003"
+    protocol: http
+
+benches:
+  latency:
+    n_requests: 200
+    warmup: 20
+  throughput:
+    duration_s: 30
+    warmup: 5
+    concurrency: 16
+  concurrency:
+    levels: [1, 4, 8, 16, 32]
+    requests_per_level: 100

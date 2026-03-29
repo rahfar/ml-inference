@@ -1,0 +1,50 @@
+networks:
+  bench-net:
+    driver: bridge
+
+x-model-volume: &model-volume
+  - ./model/weights:/app/weights:ro
+
+services:
+
+  fastapi:
+    build:
+      context: ..
+      dockerfile: servers/fastapi/Dockerfile
+    ports:
+      - "8001:8000"
+    volumes: *model-volume
+    networks: [bench-net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      retries: 5
+      start_period: 10s
+
+  grpc:
+    build:
+      context: ..
+      dockerfile: servers/grpc/Dockerfile
+    ports:
+      - "8002:50051"
+    volumes: *model-volume
+    networks: [bench-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; ch=grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=2)"]
+      interval: 5s
+      retries: 5
+      start_period: 10s
+
+  fastapi_queue:
+    build:
+      context: ..
+      dockerfile: servers/fastapi_queue/Dockerfile
+    ports:
+      - "8003:8000"
+    volumes: *model-volume
+    networks: [bench-net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      retries: 5
+      start_period: 10s

@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package inference;
+
+service InferenceService {
+  rpc Predict (PredictRequest) returns (PredictResponse);
+}
+
+message PredictRequest {
+  repeated float input = 1;  // flat: 150 floats (30 steps x 5 features)
+}
+
+message PredictResponse {
+  repeated float output = 1;     // flat: 30 floats (15 steps x 2 features)
+  string request_id = 2;
+}
