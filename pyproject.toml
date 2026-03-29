@@ -5,19 +5,15 @@ description = "ML inference benchmark: PyTorch LSTM via FastAPI and gRPC"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "catboost",
     "torch",
     "numpy",
     "fastapi",
     "uvicorn[standard]",
-    "orjson",
     "psutil",
     "httpx",
     "grpcio",
     "grpcio-tools",
-    "redis",
-    "rq",
-    "loguru>=0.7.3",
+    "pyyaml",
 ]
 
 [[tool.uv.index]]

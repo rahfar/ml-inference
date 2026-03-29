@@ -2,8 +2,6 @@ batch_size: 10
 concurrency: 4
 duration: 10
 warmup: 2
-worker_threads: 4
-redis_url: redis://localhost:6379
 health_timeout: 30
 monitor_interval: 0.5
 request_timeout: 30.0

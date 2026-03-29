@@ -12,52 +12,23 @@ import grpc
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 _SERVER_SCRIPTS = {
-    "fastapi_direct": _PROJECT_ROOT / "services/fastapi_direct/server.py",
-    "fastapi_queue": _PROJECT_ROOT / "services/fastapi_queue/server.py",
-    "grpc": _PROJECT_ROOT / "services/grpc/server.py",
+    "http": _PROJECT_ROOT / "server_http.py",
+    "grpc": _PROJECT_ROOT / "server_grpc.py",
 }
-
-_WORKER_SCRIPT = _PROJECT_ROOT / "services/fastapi_queue/async_worker.py"
 
 
 @dataclass
 class ServerHandle:
     server: str
     procs: list[subprocess.Popen] = field(default_factory=list)
-    # PIDs to monitor: {label: pid}
     monitor_pids: dict[str, int] = field(default_factory=dict)
 
 
 def start_server(server: str, host: str, port: int, cfg: dict) -> ServerHandle:
     script = _SERVER_SCRIPTS[server]
     cmd = [sys.executable, str(script), "--host", host, "--port", str(port)]
-
-    if server == "fastapi_queue":
-        cmd += ["--redis-url", cfg["redis_url"]]
-
-    srv_proc = subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    handle = ServerHandle(
-        server=server,
-        procs=[srv_proc],
-        monitor_pids={"server": srv_proc.pid},
-    )
-
-    if server == "fastapi_queue":
-        worker_cmd = [
-            sys.executable,
-            str(_WORKER_SCRIPT),
-            "--redis-url", cfg["redis_url"],
-            "--threads", str(cfg["worker_threads"]),
-        ]
-        worker_proc = subprocess.Popen(
-            worker_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-        handle.procs.append(worker_proc)
-        handle.monitor_pids["worker"] = worker_proc.pid
-
-    return handle
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return ServerHandle(server=server, procs=[proc], monitor_pids={"server": proc.pid})
 
 
 def stop_server(handle: ServerHandle):
@@ -81,7 +52,7 @@ def wait_ready_http(url: str, timeout: float = 30.0):
 
 
 def wait_ready_grpc(host: str, port: int, timeout: float = 30.0):
-    sys.path.insert(0, str(_PROJECT_ROOT / "services" / "grpc"))
+    sys.path.insert(0, str(_PROJECT_ROOT))
     import inference_pb2
     import inference_pb2_grpc
 
