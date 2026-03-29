@@ -19,9 +19,9 @@ from pydantic import BaseModel
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "model"))
 from model import HISTORY_FEATURES, HISTORY_STEPS, VesselTrackPredictor
 
-WEIGHTS = (
-    Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
-)
+_DOCKER_WEIGHTS = Path("/app/weights/model.pt")
+_LOCAL_WEIGHTS = Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
+WEIGHTS = _DOCKER_WEIGHTS if _DOCKER_WEIGHTS.exists() else _LOCAL_WEIGHTS
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 _model: VesselTrackPredictor | None = None

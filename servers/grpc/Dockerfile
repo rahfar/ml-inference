@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir \
     numpy grpcio grpcio-tools
 
 COPY model/model.py model/model.py
+ENV PYTHONPATH=/app/model
 COPY servers/grpc/inference.proto .
 COPY servers/grpc/inference_pb2.py .
 COPY servers/grpc/inference_pb2_grpc.py .

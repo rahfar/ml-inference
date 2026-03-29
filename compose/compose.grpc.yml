@@ -6,7 +6,7 @@ services:
     ports:
       - "8002:50051"
     volumes:
-      - ./model/weights:/app/weights:ro
+      - ../model/weights:/app/weights:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import grpc; ch=grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=2)"]
       interval: 5s

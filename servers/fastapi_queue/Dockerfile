@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir \
     numpy fastapi uvicorn[standard]
 
 COPY model/model.py model/model.py
+ENV PYTHONPATH=/app/model
 COPY servers/fastapi_queue/app.py .
 
 EXPOSE 8000
