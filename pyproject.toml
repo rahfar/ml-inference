@@ -17,6 +17,7 @@ dependencies = [
     "grpcio-tools",
     "redis",
     "rq",
+    "loguru>=0.7.3",
 ]
 
 [[tool.uv.index]]
