@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
-from model import (
+from model.predictor import (
     FUTURE_STEPS,
     HISTORY_FEATURES,
     HISTORY_STEPS,

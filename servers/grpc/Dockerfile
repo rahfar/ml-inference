@@ -7,13 +7,12 @@ RUN pip install --no-cache-dir \
     && pip install --no-cache-dir \
     numpy grpcio grpcio-tools
 
-COPY model/model.py model/model.py
-ENV PYTHONPATH=/app/model
-COPY servers/grpc/inference.proto .
-COPY servers/grpc/inference_pb2.py .
-COPY servers/grpc/inference_pb2_grpc.py .
-COPY servers/grpc/server.py .
+COPY model/ model/
+COPY servers/__init__.py servers/__init__.py
+COPY servers/grpc/ servers/grpc/
+
+ENV PYTHONPATH=/app
 
 EXPOSE 50051
 
-CMD ["python", "server.py", "--host", "0.0.0.0", "--port", "50051"]
+CMD ["python", "servers/grpc/server.py", "--host", "0.0.0.0", "--port", "50051"]

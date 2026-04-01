@@ -80,18 +80,11 @@ class BaseBench(ABC):
         if protocol == "grpc":
             import grpc.aio
 
+            from servers.grpc import inference_pb2_grpc
+
             url = self.server_cfg["url"]
             self._grpc_channel = grpc.aio.insecure_channel(url)
             await self._grpc_channel.channel_ready()
-
-            import sys
-            from pathlib import Path
-
-            sys.path.insert(
-                0,
-                str(Path(__file__).resolve().parent.parent / "servers" / "grpc"),
-            )
-            import inference_pb2_grpc  # type: ignore
 
             self._grpc_stub = inference_pb2_grpc.InferenceServiceStub(
                 self._grpc_channel
@@ -170,19 +163,11 @@ class BaseBench(ABC):
         return time.monotonic() - t0
 
     async def _send_grpc(self) -> float:
-        import sys
-        from pathlib import Path
-
-        sys.path.insert(
-            0, str(Path(__file__).resolve().parent.parent / "servers" / "grpc")
-        )
-        import inference_pb2  # type: ignore
+        from servers.grpc import inference_pb2
 
         samples = [inference_pb2.Sample(input=s) for s in self._payload()]
         t0 = time.monotonic()
-        await self._grpc_stub.Predict(
-            inference_pb2.PredictRequest(samples=samples)
-        )
+        await self._grpc_stub.Predict(inference_pb2.PredictRequest(samples=samples))
         return time.monotonic() - t0
 
     async def _send_queue(self) -> float:

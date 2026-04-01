@@ -4,7 +4,6 @@ Single RPC: Predict(PredictRequest) -> PredictResponse
 """
 
 import concurrent.futures
-import sys
 import uuid
 from pathlib import Path
 
@@ -12,16 +11,13 @@ import grpc
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "model"))
-
-import inference_pb2
-import inference_pb2_grpc
-
 from model import HISTORY_FEATURES, HISTORY_STEPS, VesselTrackPredictor
+from servers.grpc import inference_pb2, inference_pb2_grpc
 
 _DOCKER_WEIGHTS = Path("/app/weights/model.pt")
-_LOCAL_WEIGHTS = Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
+_LOCAL_WEIGHTS = (
+    Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
+)
 WEIGHTS = _DOCKER_WEIGHTS if _DOCKER_WEIGHTS.exists() else _LOCAL_WEIGHTS
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

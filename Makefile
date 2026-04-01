@@ -34,18 +34,19 @@ logs-%:
 	docker compose -f compose/compose.$*.yml logs -f
 
 bench:
-	python runner.py --bench $(BENCH) --server $(SERVER)
+	uv run python runner.py --bench $(BENCH) --server $(SERVER)
 
 compare: up
-	python runner.py --bench concurrency --server all --output html
+	uv run python runner.py --bench concurrency --server all --output html
 
 bench-all: up
-	python runner.py --bench all --server all --output html
+	uv run python runner.py --bench all --server all --output html
 
 train:
-	cd model && python train.py
+	uv run python model/train.py
 
 proto:
 	uv run python -m grpc_tools.protoc -I servers/grpc --python_out=servers/grpc --grpc_python_out=servers/grpc servers/grpc/inference.proto
+	sed -i '' 's/^import inference_pb2/from servers.grpc import inference_pb2/' servers/grpc/inference_pb2_grpc.py
 
 .PHONY: build up down logs bench compare bench-all train proto style

@@ -4,7 +4,6 @@ POST /predict  -- msgpack in, msgpack out
 GET  /health   -- readiness check (JSON)
 """
 
-import sys
 from pathlib import Path
 
 import msgpack
@@ -13,15 +12,12 @@ import torch
 import uvicorn
 from fastapi import FastAPI, Request, Response
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "model"))
-from model import (
-    HISTORY_FEATURES,
-    HISTORY_STEPS,
-    VesselTrackPredictor,
-)
+from model import HISTORY_FEATURES, HISTORY_STEPS, VesselTrackPredictor
 
 _DOCKER_WEIGHTS = Path("/app/weights/model.pt")
-_LOCAL_WEIGHTS = Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
+_LOCAL_WEIGHTS = (
+    Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
+)
 WEIGHTS = _DOCKER_WEIGHTS if _DOCKER_WEIGHTS.exists() else _LOCAL_WEIGHTS
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
