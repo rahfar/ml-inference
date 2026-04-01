@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 import httpx
+import msgpack
 
 
 @dataclass
@@ -139,6 +140,8 @@ class BaseBench(ABC):
         protocol = self.server_cfg["protocol"]
         if protocol == "grpc":
             return await self._send_grpc()
+        elif protocol == "msgpack":
+            return await self._send_msgpack()
         elif self.server_name == "fastapi_queue":
             return await self._send_queue()
         else:
@@ -151,6 +154,19 @@ class BaseBench(ABC):
             f"{url}/predict", json={"input": self._payload()}
         )
         resp.raise_for_status()
+        return time.monotonic() - t0
+
+    async def _send_msgpack(self) -> float:
+        url = self.server_cfg["url"]
+        payload = msgpack.packb({"input": self._payload()}, use_bin_type=True)
+        t0 = time.monotonic()
+        resp = await self._http_client.post(
+            f"{url}/predict",
+            content=payload,
+            headers={"Content-Type": "application/x-msgpack"},
+        )
+        resp.raise_for_status()
+        msgpack.unpackb(resp.content, raw=False)
         return time.monotonic() - t0
 
     async def _send_grpc(self) -> float:

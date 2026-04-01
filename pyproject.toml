@@ -12,6 +12,7 @@ dependencies = [
     "grpcio",
     "grpcio-tools",
     "httpx",
+    "msgpack",
     "pyyaml",
     "rich",
     "ruff>=0.15.8",

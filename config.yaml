@@ -8,6 +8,9 @@ servers:
   fastapi_queue:
     url: "http://localhost:8003"
     protocol: http
+  fastapi_msgpack:
+    url: "http://localhost:8004"
+    protocol: msgpack
 
 benches:
   latency:

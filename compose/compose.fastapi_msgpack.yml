@@ -1,0 +1,14 @@
+services:
+  fastapi_msgpack:
+    build:
+      context: ..
+      dockerfile: servers/fastapi_msgpack/Dockerfile
+    ports:
+      - "8004:8000"
+    volumes:
+      - ../model/weights:/app/weights:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      retries: 5
+      start_period: 10s
