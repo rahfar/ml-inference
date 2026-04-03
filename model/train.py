@@ -99,3 +99,18 @@ path = WEIGHTS_DIR / "model.pt"
 torch.save(model.state_dict(), path)
 size_kb = os.path.getsize(path) / 1024
 print(f"\nSaved {path}  ({size_kb:.1f} KB)")
+
+# Export ONNX
+onnx_path = WEIGHTS_DIR / "model.onnx"
+dummy = torch.zeros(1, HISTORY_STEPS, HISTORY_FEATURES)
+torch.onnx.export(
+    model,
+    dummy,
+    onnx_path,
+    input_names=["input"],
+    output_names=["output"],
+    dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
+    opset_version=17,
+)
+size_kb = os.path.getsize(onnx_path) / 1024
+print(f"Exported {onnx_path}  ({size_kb:.1f} KB)")

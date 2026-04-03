@@ -11,6 +11,9 @@ servers:
   fastapi_msgpack:
     url: "http://localhost:8004"
     protocol: msgpack
+  go:
+    url: "http://localhost:8005"
+    protocol: http
 
 benches:
   latency:
