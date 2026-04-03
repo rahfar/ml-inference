@@ -1,0 +1,14 @@
+services:
+  go:
+    build:
+      context: ..
+      dockerfile: servers/go/Dockerfile
+    ports:
+      - "8005:8000"
+    volumes:
+      - ../model/weights:/app/weights:ro
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:8000/health || exit 1"]
+      interval: 5s
+      retries: 5
+      start_period: 10s
