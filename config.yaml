@@ -14,6 +14,9 @@ servers:
   go:
     url: "http://localhost:8005"
     protocol: http
+  fastapi_batched:
+    url: "http://localhost:8006"
+    protocol: http
 
 benches:
   latency:

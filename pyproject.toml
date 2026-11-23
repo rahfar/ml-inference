@@ -1,9 +1,30 @@
 [project]
 name = "ml-inference-bench"
 version = "0.1.0"
-description = "Benchmark and compare three PyTorch serving strategies"
+description = "Benchmark and compare PyTorch serving strategies"
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = [
+    # model + servers
+    "torch",
+    "numpy",
+    "fastapi",
+    "uvicorn[standard]",
+    "grpcio",
+    "protobuf",
+    "msgpack",
+    # bench runner
+    "httpx",
+    "pyyaml",
+]
+
+[dependency-groups]
+dev = [
+    "grpcio-tools",  # make proto
+    "onnxscript",    # torch.onnx.export in model/train.py (for the Go server)
+    "ruff>=0.15.8",
+    "ty>=0.0.26",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -11,20 +32,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["model", "servers", "benches"]
-dependencies = [
-    "torch",
-    "numpy",
-    "fastapi",
-    "uvicorn[standard]",
-    "grpcio",
-    "grpcio-tools",
-    "httpx",
-    "msgpack",
-    "pyyaml",
-    "rich",
-    "ruff>=0.15.8",
-    "ty>=0.0.26",
-]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

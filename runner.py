@@ -23,7 +23,14 @@ BENCH_CLASSES = {
     "concurrency": ConcurrencyBench,
 }
 
-SERVER_NAMES = ["fastapi", "grpc", "fastapi_queue", "fastapi_msgpack", "go"]
+SERVER_NAMES = [
+    "fastapi",
+    "grpc",
+    "fastapi_queue",
+    "fastapi_msgpack",
+    "go",
+    "fastapi_batched",
+]
 
 
 def parse_args():
@@ -35,7 +42,7 @@ def parse_args():
     )
     p.add_argument(
         "--server",
-        choices=["fastapi", "grpc", "fastapi_queue", "fastapi_msgpack", "go", "all"],
+        choices=[*SERVER_NAMES, "all"],
         default="fastapi",
     )
     p.add_argument(

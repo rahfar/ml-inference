@@ -4,12 +4,15 @@
 
 ML Inference Bench — benchmark and compare three PyTorch serving strategies for a vessel track predictor LSTM model.
 
-**Three servers:**
+**Servers:**
 | Server | Protocol | Host Port | Pattern |
 |---|---|---|---|
 | `fastapi` | HTTP/REST | 8001 | Sync inference in async handler |
 | `grpc` | gRPC/HTTP2 | 8002 | Binary protocol, thread pool |
 | `fastapi_queue` | HTTP/REST | 8003 | Submit → poll via asyncio.Queue |
+| `fastapi_msgpack` | HTTP/MessagePack | 8004 | Inline inference, msgpack body |
+| `go` | HTTP/REST | 8005 | Go + ONNX Runtime |
+| `fastapi_batched` | HTTP/REST | 8006 | In-process dynamic batching (torch); env: WORKERS, TORCH_NUM_THREADS, MAX_BATCH, MAX_QUEUE, REQUEST_TIMEOUT_S |
 
 **Model:** LSTM encoder (hidden=256, layers=2) → linear decoder (~3 MB)
 - Input: 30 steps × 5 features (flat 150 floats)
@@ -26,6 +29,9 @@ servers/
   fastapi/app.py        # Baseline REST server
   grpc/server.py        # gRPC server + proto/stubs
   fastapi_queue/app.py  # Queue-based server (submit/poll)
+  fastapi_msgpack/app.py # MessagePack serialization
+  fastapi_batched/app.py # Dynamic batching (asyncio.Queue + Future, 1 inference thread)
+  go/main.go            # Go + ONNX Runtime
 benches/
   base.py               # BaseBench ABC + BenchResult dataclass
   latency_bench.py      # Single-user P50/P95/P99
@@ -44,8 +50,11 @@ Makefile                # Developer shortcuts
 **Package manager:** `uv`
 
 ```bash
-# Train model (required before running servers)
-cd model && uv run train.py
+# Install deps (runtime + dev group: grpcio-tools, onnxscript, ruff, ty)
+uv sync
+
+# Train model (required before running servers; also exports model.onnx for Go)
+make train
 
 # Regenerate gRPC stubs
 make proto

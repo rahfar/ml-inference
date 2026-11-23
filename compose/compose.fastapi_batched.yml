@@ -1,0 +1,14 @@
+services:
+  fastapi_batched:
+    build:
+      context: ..
+      dockerfile: servers/fastapi_batched/Dockerfile
+    ports:
+      - "8006:8000"
+    volumes:
+      - ../model/weights:/app/weights:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      retries: 5
+      start_period: 10s
