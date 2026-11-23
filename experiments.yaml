@@ -15,14 +15,16 @@ defaults:
 experiments:
   # 1. Where and when predict() runs. Everything else fixed.
   strategy:
-    fixed: {model: lstm, codec: json}
+    fixed: {codec: json}
     vary:
+      model: [noop, catboost, lstm]
       strategy: [inline_loop, inline_threadpool, serial, batched]
 
   # 2. Wire format, at growing payloads. Strategy fixed to the winner of 1.
   codec:
-    fixed: {model: lstm, strategy: batched}
+    fixed: {strategy: batched}
     vary:
+      model: [noop, catboost, lstm]
       codec: [json, msgpack, protobuf, raw]
       samples: [1, 32, 512]
     levels: [1, 16]

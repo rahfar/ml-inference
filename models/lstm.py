@@ -7,7 +7,13 @@ import numpy as np
 import torch
 from torch import nn
 
-from models.data import HISTORY_FEATURES, HISTORY_STEPS, OUTPUT_SIZE
+from models.data import (
+    HISTORY_FEATURES,
+    HISTORY_STEPS,
+    OUTPUT_SIZE,
+    from_offsets,
+    to_relative,
+)
 
 WEIGHTS = Path(__file__).parent / "weights" / "lstm.pt"
 
@@ -21,7 +27,7 @@ class Net(nn.Module):
         self.decoder = nn.Linear(hidden_size, OUTPUT_SIZE)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """(n, 30, 5) -> (n, 30)"""
+        """(n, 30, 5) relative history -> (n, 30) offsets"""
         _, (h, _) = self.encoder(x)
         return self.decoder(h[-1])
 
@@ -41,6 +47,7 @@ class LSTMModel:
         if getattr(self._thread_state, "threads", None) != self.threads:
             torch.set_num_threads(self.threads)
             self._thread_state.threads = self.threads
+        seq = torch.from_numpy(to_relative(x)).view(-1, HISTORY_STEPS, HISTORY_FEATURES)
         with torch.inference_mode():
-            y = self.net(torch.from_numpy(x).view(-1, HISTORY_STEPS, HISTORY_FEATURES))
-        return y.numpy()
+            offsets = self.net(seq).numpy()
+        return from_offsets(x, offsets)

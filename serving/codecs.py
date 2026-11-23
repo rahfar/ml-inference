@@ -57,8 +57,7 @@ def raw_encode(a: np.ndarray) -> bytes:
 
 
 def raw_decode(b: bytes) -> np.ndarray:
-    # copy: frombuffer gives a read-only view and torch wants a writable array
-    return np.frombuffer(b, dtype=np.float32).copy()
+    return np.frombuffer(b, dtype=np.float32)
 
 
 CODECS = {

@@ -13,6 +13,7 @@ dependencies = [
     "protobuf",
     "aiohttp",
     "pyyaml",
+    "catboost>=1.2.10",
 ]
 
 [dependency-groups]

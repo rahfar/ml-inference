@@ -20,3 +20,4 @@ models/weights/
 # OS
 .DS_Store
 results/
+catboost_info/

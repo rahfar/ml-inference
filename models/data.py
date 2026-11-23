@@ -46,3 +46,29 @@ def make_dataset(n: int, seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
         future[:, t] = np.stack([lat, lon], axis=1)
 
     return history.reshape(n, INPUT_SIZE), future.reshape(n, OUTPUT_SIZE)
+
+
+# Models work in coordinates relative to the last observed position: offsets
+# are small and similar for every track, absolute lat/lon are not.
+
+
+def last_position(x: np.ndarray) -> np.ndarray:
+    """(n, 150) -> (n, 2): lat, lon at the last history step."""
+    return x.reshape(len(x), HISTORY_STEPS, HISTORY_FEATURES)[:, -1, :2]
+
+
+def to_relative(x: np.ndarray) -> np.ndarray:
+    """Model input: the history with lat/lon relative to the last position."""
+    seq = x.reshape(len(x), HISTORY_STEPS, HISTORY_FEATURES).copy()
+    seq[:, :, :2] -= seq[:, -1:, :2]
+    return seq.reshape(len(x), INPUT_SIZE)
+
+
+def to_offsets(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Training target: future positions as offsets from the last position."""
+    return y - np.tile(last_position(x), FUTURE_STEPS)
+
+
+def from_offsets(x: np.ndarray, offsets: np.ndarray) -> np.ndarray:
+    """Model output (n, 30) offsets -> absolute future positions."""
+    return offsets + np.tile(last_position(x), FUTURE_STEPS)

@@ -4,7 +4,7 @@ from typing import Protocol
 
 import numpy as np
 
-MODELS = ("lstm", "null")
+MODELS = ("lstm", "catboost", "noop")
 
 
 class Model(Protocol):
@@ -12,13 +12,17 @@ class Model(Protocol):
 
 
 def load(name: str, threads: int) -> Model:
-    # Imported lazily so that e.g. the null model doesn't pull in torch.
+    # Imported lazily so that each server only loads its own library.
     if name == "lstm":
         from models.lstm import LSTMModel
 
         return LSTMModel(threads)
-    if name == "null":
-        from models.null import NullModel
+    if name == "catboost":
+        from models.boosting import CatBoostModel
 
-        return NullModel()
+        return CatBoostModel(threads)
+    if name == "noop":
+        from models.noop import NoopModel
+
+        return NoopModel()
     raise ValueError(f"unknown model {name!r}, expected one of {MODELS}")
