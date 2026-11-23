@@ -10,9 +10,7 @@ wheels/
 .venv
 
 # Model weights
-model/weights/*.pt
-model/weights/*.onnx
-model/weights/*.onnx.data
+models/weights/
 
 # IDE
 .idea/

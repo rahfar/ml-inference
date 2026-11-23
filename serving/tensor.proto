@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package serving;
+
+// Flat float32 values, row-major. The receiver knows the row width
+// (150 for requests, 30 for responses).
+message Tensor {
+  repeated float values = 1;  // packed by default in proto3
+}

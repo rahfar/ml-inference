@@ -1,0 +1,28 @@
+# Each experiment holds some settings fixed and varies others. Every
+# combination of the `vary` lists is one variant; each variant gets a fresh
+# server process and is measured at every concurrency level.
+#
+#   uv run python -m bench.run <experiment>
+
+defaults:
+  threads: 4  # threads per predict() call; match your performance cores
+  samples: 1  # rows per request
+  levels: [1, 4, 16, 64]  # concurrent users
+  warmup_s: 2
+  duration_s: 10
+  client_processes: 4
+
+experiments:
+  # 1. Where and when predict() runs. Everything else fixed.
+  strategy:
+    fixed: {model: lstm, codec: json}
+    vary:
+      strategy: [inline_loop, inline_threadpool, serial, batched]
+
+  # 2. Wire format, at growing payloads. Strategy fixed to the winner of 1.
+  codec:
+    fixed: {model: lstm, strategy: batched}
+    vary:
+      codec: [json, msgpack, protobuf, raw]
+      samples: [1, 32, 512]
+    levels: [1, 16]

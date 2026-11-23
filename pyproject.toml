@@ -1,26 +1,23 @@
 [project]
 name = "ml-inference-bench"
 version = "0.1.0"
-description = "Benchmark and compare PyTorch serving strategies"
+description = "What is the most efficient way to serve a model behind an API, in one Python process?"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # model + servers
     "torch",
     "numpy",
     "fastapi",
     "uvicorn[standard]",
-    "grpcio",
-    "protobuf",
     "msgpack",
-    # bench runner
+    "protobuf",
     "aiohttp",
     "pyyaml",
 ]
 
 [dependency-groups]
 dev = [
-    "grpcio-tools",  # make proto
+    "grpcio-tools",  # protoc, for `make proto`
     "ruff>=0.15.8",
     "ty>=0.0.26",
 ]
@@ -30,7 +27,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["model", "servers", "benches"]
+packages = ["models", "serving", "bench"]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -41,3 +38,6 @@ explicit = true
 torch = [
   { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+
+[tool.ruff]
+extend-exclude = ["serving/tensor_pb2.py"]
