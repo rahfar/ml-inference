@@ -11,6 +11,8 @@ wheels/
 
 # Model weights
 model/weights/*.pt
+model/weights/*.onnx
+model/weights/*.onnx.data
 
 # IDE
 .idea/
