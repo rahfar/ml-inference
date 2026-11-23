@@ -21,3 +21,4 @@ model/weights/*.onnx.data
 
 # OS
 .DS_Store
+results/

@@ -22,7 +22,7 @@ ML Inference Bench — benchmark and compare three PyTorch serving strategies fo
 
 ```
 model/
-  model.py              # VesselTrackPredictor + dimension constants
+  predictor.py          # VesselTrackPredictor + dimension constants
   train.py              # Synthetic data generation + training
   weights/model.pt      # Saved weights (git-ignored)
 servers/
@@ -33,14 +33,17 @@ servers/
   fastapi_batched/app.py # Dynamic batching (asyncio.Queue + Future, 1 inference thread)
   go/main.go            # Go + ONNX Runtime
 benches/
-  base.py               # BaseBench ABC + BenchResult dataclass
+  base.py               # Protocol clients, multi-process load runner, BenchResult
+  Dockerfile            # Load-generator image (no torch)
   latency_bench.py      # Single-user P50/P95/P99
   throughput_bench.py   # Max RPS under sustained load
   concurrency_bench.py  # Latency vs concurrent users curve
 compose/
-  docker-compose.yml    # All 3 servers
-runner.py               # CLI bench runner (runs on host)
-report.py               # Results → table/JSON/HTML
+  compose.<server>.yml  # One file per server (cpuset SERVER_CPUS, default 0-3)
+  bench.yml             # Bench client container (cpuset CLIENT_CPUS, default 4-9)
+runner.py               # CLI bench runner (--target host|docker)
+report.py               # Results → table/JSON/HTML; CLI merges JSON files
+results/                # Bench output (git-ignored)
 config.yaml             # Server URLs, bench defaults
 Makefile                # Developer shortcuts
 ```
@@ -60,31 +63,31 @@ make train
 make proto
 
 # Docker workflow
-make build          # build all 3 server images
+make build          # build all server images
 make up             # start all servers (waits for healthy)
 make down           # tear down
 
-# Run benchmarks (servers must be running)
-make bench BENCH=latency SERVER=fastapi
-make bench BENCH=concurrency SERVER=all
-make compare        # concurrency sweep → HTML report
-make bench-all      # full matrix → HTML report
+# Real numbers: isolated Docker run (fresh container per server, client on the
+# compose network with its own cpuset) -> results/<bench>-<server>.json + results/<bench>.html
+make bench-docker BENCH=latency                     # SERVERS="fastapi go" to subset
+make compare        # = bench-docker BENCH=concurrency
+make bench-all      # = bench-docker BENCH=all
 
-# Or directly:
-python runner.py --bench latency --server fastapi
-python runner.py --bench all --server all --output html
+# Quick host run against already-running servers (client shares CPUs with servers)
+make bench BENCH=latency SERVER=fastapi
+uv run python runner.py --bench concurrency --server fastapi --concurrency 1 16 --duration 5
 ```
 
 ## Architecture
 
 ### Bench suite
-- `latency_bench` — N sequential requests, 1 user, reports P50/P95/P99
-- `throughput_bench` — sustained concurrent load for duration, reports max stable RPS
-- `concurrency_bench` — sweeps concurrency levels, reports latency curve
+- `latency_bench` — 1 user, sequential, fixed duration
+- `throughput_bench` — fixed concurrency, fixed duration
+- `concurrency_bench` — sweeps concurrency levels, each an independent warmup + measurement window
 
-All benches inherit from `BaseBench` which handles HTTP, gRPC, and queue (submit+poll) request patterns.
+All benches call `BaseBench.load()` → `run_load()`: closed-loop users spread over up to `client.processes` spawned processes (aiohttp/uvloop or grpc.aio), warmup window discarded, only requests starting in the measurement window count. Request bodies are pre-encoded per protocol; timing covers send → response decoded. Each result reports client CPU of the busiest client process — ≥80% means the run is client-bound.
 
 ### Config
-All server URLs and bench parameters live in `config.yaml`. The runner reads from there — no hardcoded URLs in bench code.
+All server URLs (`url` for host, `docker_url` for the compose network), client processes and bench parameters live in `config.yaml`. The runner reads from there — no hardcoded URLs in bench code. Queue-pattern servers are marked with `pattern: queue`.
 
-No test framework or linter is configured.
+No test framework is configured. Lint/format with `make style` (ruff).

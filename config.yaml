@@ -1,31 +1,45 @@
+# url        -- used with `--target host`   (client on the host, via published ports)
+# docker_url -- used with `--target docker` (client container on the compose network)
 servers:
   fastapi:
     url: "http://localhost:8001"
+    docker_url: "http://fastapi:8000"
     protocol: http
   grpc:
     url: "localhost:8002"
+    docker_url: "grpc:50051"
     protocol: grpc
   fastapi_queue:
     url: "http://localhost:8003"
+    docker_url: "http://fastapi_queue:8000"
     protocol: http
+    pattern: queue
   fastapi_msgpack:
     url: "http://localhost:8004"
+    docker_url: "http://fastapi_msgpack:8000"
     protocol: msgpack
   go:
     url: "http://localhost:8005"
+    docker_url: "http://go:8000"
     protocol: http
   fastapi_batched:
     url: "http://localhost:8006"
+    docker_url: "http://fastapi_batched:8000"
     protocol: http
+
+client:
+  # Max client processes; each level uses min(processes, concurrency).
+  processes: 4
 
 benches:
   latency:
-    n_requests: 200
-    warmup: 20
+    warmup_s: 2
+    duration_s: 10
   throughput:
+    warmup_s: 5
     duration_s: 30
-    warmup: 5
     concurrency: 16
   concurrency:
-    levels: [1, 4, 8, 16, 32]
-    requests_per_level: 100
+    levels: [1, 4, 8, 16, 32, 64]
+    warmup_s: 2
+    duration_s: 10

@@ -11,13 +11,15 @@ concatenates it into one tensor and runs a single forward pass on a dedicated
 thread, so the event loop never blocks. At low load batches are size 1 with no
 added delay; under load they grow while the previous forward pass is running.
 
-Scale out with processes, not threads: WORKERS uvicorn processes each run their
-own batcher, so aim for WORKERS x TORCH_NUM_THREADS ~= cores. For this small
-LSTM, extra intra-op threads barely help and oversubscription hurts.
+WORKERS uvicorn processes each run their own batcher; keep
+WORKERS x TORCH_NUM_THREADS ~= cores available to the process (respects the
+container cpuset). Whether threads or processes win depends on the platform:
+on Linux/ARM in Docker 4 threads are ~3x faster than 1 per forward pass, on
+macOS extra threads barely help -- measure.
 
 Tunables (env vars):
     WORKERS             uvicorn worker processes                      (default: 1)
-    TORCH_NUM_THREADS   intra-op threads per forward pass             (default: 1)
+    TORCH_NUM_THREADS   intra-op threads per forward pass  (default: cores // WORKERS)
     MAX_BATCH           max samples per forward pass                  (default: 64)
     MAX_QUEUE           max queued requests before returning 503      (default: 1024)
     REQUEST_TIMEOUT_S   per-request deadline before returning 504     (default: 1.0)
@@ -44,7 +46,15 @@ _LOCAL_WEIGHTS = (
 WEIGHTS = _DOCKER_WEIGHTS if _DOCKER_WEIGHTS.exists() else _LOCAL_WEIGHTS
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-TORCH_NUM_THREADS = int(os.environ.get("TORCH_NUM_THREADS", "1"))
+WORKERS = int(os.environ.get("WORKERS", "1"))
+_CORES = (
+    len(os.sched_getaffinity(0))
+    if hasattr(os, "sched_getaffinity")
+    else os.cpu_count() or 1
+)
+TORCH_NUM_THREADS = int(
+    os.environ.get("TORCH_NUM_THREADS", str(max(1, _CORES // WORKERS)))
+)
 MAX_BATCH = int(os.environ.get("MAX_BATCH", "64"))
 MAX_QUEUE = int(os.environ.get("MAX_QUEUE", "1024"))
 REQUEST_TIMEOUT_S = float(os.environ.get("REQUEST_TIMEOUT_S", "1.0"))
@@ -64,7 +74,15 @@ class Batcher:
         self.q: asyncio.Queue[tuple[np.ndarray, asyncio.Future]] = asyncio.Queue(
             maxsize=max_queue
         )
-        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="infer")
+        # The thread count must be set *in* the inference thread: OpenMP keeps
+        # per-thread settings, so torch.set_num_threads() on the main thread does
+        # not apply here (get_num_threads() would still report the main value).
+        self.pool = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="infer",
+            initializer=torch.set_num_threads,
+            initargs=(TORCH_NUM_THREADS,),
+        )
 
     def _infer(self, x: np.ndarray) -> np.ndarray:
         """Runs on the inference thread. x: (N, 30, 5) -> (N, 15, 2)."""
@@ -119,9 +137,8 @@ _batcher: Batcher | None = None
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global _batcher
-    # Runs once per worker process. One forward pass at a time per process, so
-    # keep threading explicit to avoid oversubscription across workers.
-    torch.set_num_threads(TORCH_NUM_THREADS)
+    # Runs once per worker process. Intra-op threads are set in the inference
+    # thread (see Batcher); no inter-op parallelism needed.
     torch.set_num_interop_threads(1)
     _batcher = Batcher(load_model(), MAX_BATCH, MAX_QUEUE)
     task = asyncio.create_task(_batcher.run())
@@ -165,9 +182,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument(
-        "--workers", type=int, default=int(os.environ.get("WORKERS", "1"))
-    )
+    parser.add_argument("--workers", type=int, default=WORKERS)
     args = parser.parse_args()
     uvicorn.run(
         "servers.fastapi_batched.app:app",

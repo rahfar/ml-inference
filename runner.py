@@ -1,17 +1,19 @@
-"""CLI bench runner -- runs on host, hits Dockerised servers.
+"""CLI bench runner.
 
 Usage:
     python runner.py --bench latency --server fastapi
-    python runner.py --bench concurrency --server all
-    python runner.py --bench all --server all --output html
+    python runner.py --bench concurrency --server all --output html --out report.html
+    python runner.py --bench all --server go --target docker   # inside the bench container
+
+Progress goes to stderr; the rendered report goes to stdout (or --out).
 """
 
 import argparse
-import asyncio
+import sys
 
 import yaml
 
-from benches.base import BenchResult
+from benches.base import CLIENT_CPU_WARN_PCT, BenchResult
 from benches.concurrency_bench import ConcurrencyBench
 from benches.latency_bench import LatencyBench
 from benches.throughput_bench import ThroughputBench
@@ -35,32 +37,24 @@ SERVER_NAMES = [
 
 def parse_args():
     p = argparse.ArgumentParser(description="ML inference benchmark runner")
+    p.add_argument("--bench", choices=[*BENCH_CLASSES, "all"], default="latency")
+    p.add_argument("--server", choices=[*SERVER_NAMES, "all"], default="fastapi")
     p.add_argument(
-        "--bench",
-        choices=["latency", "throughput", "concurrency", "all"],
-        default="latency",
+        "--target",
+        choices=["host", "docker"],
+        default="host",
+        help="host: use published ports (url); docker: use service names (docker_url)",
     )
-    p.add_argument(
-        "--server",
-        choices=[*SERVER_NAMES, "all"],
-        default="fastapi",
-    )
-    p.add_argument(
-        "--output",
-        choices=["table", "json", "html"],
-        default="table",
-    )
+    p.add_argument("--output", choices=["table", "json", "html"], default="table")
+    p.add_argument("--out", help="Write the report to this file instead of stdout")
     p.add_argument(
         "--concurrency", type=int, nargs="+", help="Override concurrency levels"
     )
     p.add_argument(
-        "--duration", type=int, help="Override throughput duration (seconds)"
+        "--duration", type=float, help="Override measurement duration (all benches)"
     )
     p.add_argument(
-        "--n-requests",
-        type=int,
-        dest="n_requests",
-        help="Override latency request count",
+        "--client-procs", type=int, dest="client_procs", help="Max client processes"
     )
     p.add_argument("--config", default="config.yaml", help="Path to config file")
     return p.parse_args()
@@ -75,49 +69,59 @@ def apply_overrides(config: dict, args) -> dict:
     if args.concurrency:
         config["benches"]["concurrency"]["levels"] = args.concurrency
     if args.duration:
-        config["benches"]["throughput"]["duration_s"] = args.duration
-    if args.n_requests:
-        config["benches"]["latency"]["n_requests"] = args.n_requests
+        for bench_cfg in config["benches"].values():
+            bench_cfg["duration_s"] = args.duration
+    if args.client_procs:
+        config.setdefault("client", {})["processes"] = args.client_procs
     return config
 
 
-async def run_all(
-    bench_names: list[str], server_names: list[str], config: dict
+def log(msg: str = "") -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def run_all(
+    bench_names: list[str], server_names: list[str], config: dict, target: str
 ) -> list[BenchResult]:
     results: list[BenchResult] = []
     for bench_name in bench_names:
-        cls = BENCH_CLASSES[bench_name]
         for server_name in server_names:
-            print(f"\n{'=' * 60}")
-            print(f"  {bench_name} -- {server_name}")
-            print(f"{'=' * 60}")
-            bench = cls(server_name, config)
-            await bench.setup()
-            try:
-                bench_results = await bench.run()
-            finally:
-                await bench.teardown()
-            results.extend(bench_results)
-            for r in bench_results:
-                print(
-                    f"  c={r.concurrency:>3}  "
-                    f"P50={r.p50_ms:>8.2f}ms  P95={r.p95_ms:>8.2f}ms  P99={r.p99_ms:>8.2f}ms  "
-                    f"RPS={r.throughput_rps:>8.1f}  err={r.error_rate:.1%}"
+            log(f"\n{'=' * 60}\n  {bench_name} -- {server_name}\n{'=' * 60}")
+            bench = BENCH_CLASSES[bench_name](server_name, config, target=target)
+            for r in bench.run():
+                results.append(r)
+                warn = (
+                    "  <- client-bound"
+                    if r.client_cpu_pct >= CLIENT_CPU_WARN_PCT
+                    else ""
                 )
+                log(
+                    f"  c={r.concurrency:>3}  "
+                    f"P50={r.p50_ms:>8.2f}ms  P95={r.p95_ms:>8.2f}ms  "
+                    f"P99={r.p99_ms:>8.2f}ms  RPS={r.throughput_rps:>8.1f}  "
+                    f"n={r.n_samples:>6}  err={r.error_rate:.1%}  "
+                    f"client={r.client_procs}p/{r.client_cpu_pct:.0f}%{warn}"
+                )
+                for err, count in list(r.errors.items())[:3]:
+                    log(f"         {count}x {err}")
     return results
 
 
 def main():
     args = parse_args()
-    config = load_config(args.config)
-    config = apply_overrides(config, args)
+    config = apply_overrides(load_config(args.config), args)
 
-    bench_names = list(BENCH_CLASSES.keys()) if args.bench == "all" else [args.bench]
+    bench_names = list(BENCH_CLASSES) if args.bench == "all" else [args.bench]
     server_names = SERVER_NAMES if args.server == "all" else [args.server]
 
-    results = asyncio.run(run_all(bench_names, server_names, config))
+    results = run_all(bench_names, server_names, config, args.target)
     output = render(results, fmt=args.output)
-    print(output)
+    if args.out:
+        with open(args.out, "w") as f:
+            f.write(output)
+        log(f"\nWrote {args.out}")
+    else:
+        print(output)
 
 
 if __name__ == "__main__":
