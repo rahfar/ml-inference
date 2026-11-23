@@ -12,10 +12,10 @@ thread, so the event loop never blocks. At low load batches are size 1 with no
 added delay; under load they grow while the previous forward pass is running.
 
 WORKERS uvicorn processes each run their own batcher; keep
-WORKERS x TORCH_NUM_THREADS ~= cores available to the process (respects the
-container cpuset). Whether threads or processes win depends on the platform:
-on Linux/ARM in Docker 4 threads are ~3x faster than 1 per forward pass, on
-macOS extra threads barely help -- measure.
+WORKERS x TORCH_NUM_THREADS ~= cores available to the process (respects CPU
+affinity on Linux). Whether threads or processes win depends on the platform:
+on Linux/ARM 4 threads were ~3x faster than 1 per forward pass, on macOS
+extra threads barely help -- measure.
 
 Tunables (env vars):
     WORKERS             uvicorn worker processes                      (default: 1)
@@ -29,7 +29,6 @@ import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -37,13 +36,14 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from model import HISTORY_FEATURES, HISTORY_STEPS, INPUT_SIZE, VesselTrackPredictor
-
-_DOCKER_WEIGHTS = Path("/app/weights/model.pt")
-_LOCAL_WEIGHTS = (
-    Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
+from model import (
+    HISTORY_FEATURES,
+    HISTORY_STEPS,
+    INPUT_SIZE,
+    WEIGHTS_PATH,
+    VesselTrackPredictor,
 )
-WEIGHTS = _DOCKER_WEIGHTS if _DOCKER_WEIGHTS.exists() else _LOCAL_WEIGHTS
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 WORKERS = int(os.environ.get("WORKERS", "1"))
@@ -62,7 +62,9 @@ REQUEST_TIMEOUT_S = float(os.environ.get("REQUEST_TIMEOUT_S", "1.0"))
 
 def load_model() -> VesselTrackPredictor:
     model = VesselTrackPredictor().to(DEVICE)
-    model.load_state_dict(torch.load(WEIGHTS, weights_only=True, map_location=DEVICE))
+    model.load_state_dict(
+        torch.load(WEIGHTS_PATH, weights_only=True, map_location=DEVICE)
+    )
     model.eval()
     return model
 

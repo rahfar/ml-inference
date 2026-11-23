@@ -337,11 +337,11 @@ def run_load(
 
 
 class BaseBench(ABC):
-    def __init__(self, server_name: str, config: dict, target: str = "host"):
+    def __init__(self, server_name: str, config: dict):
         self.server_name = server_name
         self.config = config
         self.server_cfg = config["servers"][server_name]
-        self.url = self.server_cfg["docker_url" if target == "docker" else "url"]
+        self.url = self.server_cfg["url"]
         self.max_procs = config.get("client", {}).get("processes", 4)
 
     @abstractmethod

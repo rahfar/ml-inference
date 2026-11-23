@@ -1,7 +1,6 @@
 """Train the vessel-track LSTM and save to model/weights/model.pt."""
 
 import os
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -12,11 +11,11 @@ from model.predictor import (
     FUTURE_STEPS,
     HISTORY_FEATURES,
     HISTORY_STEPS,
+    WEIGHTS_PATH,
     VesselTrackPredictor,
 )
 
-WEIGHTS_DIR = Path(__file__).parent / "weights"
-WEIGHTS_DIR.mkdir(exist_ok=True)
+WEIGHTS_PATH.parent.mkdir(exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Synthetic vessel-track dataset
@@ -95,7 +94,7 @@ for epoch in range(3):
         f"  epoch {epoch + 1:2d}/3  train={tr_loss / train_n:.4f}  val={val_loss / val_n:.4f}"
     )
 
-path = WEIGHTS_DIR / "model.pt"
+path = WEIGHTS_PATH
 torch.save(model.state_dict(), path)
 size_kb = os.path.getsize(path) / 1024
 print(f"\nSaved {path}  ({size_kb:.1f} KB)")

@@ -18,17 +18,16 @@ Benchmark and compare PyTorch serving strategies for a vessel track predictor LS
 
 ## Methodology
 
-`make bench-all` runs every bench against every server in isolation:
+`make bench-all` (`runner.py --spawn`) runs every bench against every server:
 
-- **Fresh container per server.** It's started, benchmarked and torn down before the next server, so no state carries over between runs.
-- **Client and server on separate cores.** Servers are pinned to `cpuset: 0-3` (`SERVER_CPUS`). The load generator runs in its own container on `cpuset: 4-9` (`CLIENT_CPUS`), on the compose network, so there's no Docker Desktop port forwarding.
+- **Fresh server process per run.** For each bench and server, the runner starts the server from its `cmd` in `config.yaml`, waits until it's ready, benchmarks it and stops it, so no state carries over between runs. It refuses to start if something is already serving that port. Server output goes to `results/logs/<server>.log`.
 - **Multi-process client.** Up to 4 spawned processes (aiohttp + uvloop, or grpc.aio), each with its own event loop and connections. Every result reports the CPU use of the busiest client process. At or above 80% the run is flagged as client-bound.
 - **Closed loop, fixed windows.** C virtual users each send their next request as soon as the last one returns. Every run has a warmup at the target concurrency (discarded; it also opens all connections), then a fixed measurement window. Only requests that start inside the window count.
 - **Same timing for every protocol.** The request body is pre-encoded once. The timer covers send → full response → response decoded.
 
-**Environment:** Docker Desktop on Apple Silicon (10 vCPUs, arm64 Linux VM), torch 2.15 CPU, 1 sample per request. Latency: 1 user, 10 s. Throughput: 16 users, 30 s. Concurrency: 10 s per level. These are single runs, so expect roughly ±10% between runs. For example, `fastapi_batched` at 16 users did 798 RPS in the throughput bench and 720 RPS in the sweep.
+**Environment of the results below:** these were measured with the project's former Docker setup (commit `3a1ec22`): Docker Desktop on Apple Silicon (10 vCPUs, arm64 Linux VM), servers pinned to cores 0–3, the client in its own container on cores 4–9. torch 2.15 CPU, 1 sample per request. Latency: 1 user, 10 s. Throughput: 16 users, 30 s. Concurrency: 10 s per level. These are single runs, so expect roughly ±10% between runs. For example, `fastapi_batched` at 16 users did 798 RPS in the throughput bench and 720 RPS in the sweep.
 
-In every run below, client CPU stayed at or below 5%, so the numbers measure the servers.
+In every run below, client CPU stayed at or below 5%, so the numbers measure the servers. Runs on the current setup, natively on macOS, give different absolute numbers and shouldn't be mixed with these.
 
 ## Benchmark Results
 
@@ -76,9 +75,9 @@ In every run below, client CPU stayed at or below 5%, so the numbers measure the
 | 32 | 92.6 / 243.9 | 99.4 / 110.3 | 87.4 / 175.1 | 205.9 / 222.9 | **19.8 / 34.7** |
 | 64 | 196.0 / 421.3 | 198.3 / 213.5 | 181.8 / 361.6 | 411.9 / 428.8 | **35.2 / 51.6** |
 
-### Forward-pass cost inside the server container
+### Forward-pass cost (Linux/arm64, 4 cores)
 
-Model only, no HTTP, `cpuset 0-3`, ms per forward pass:
+Model only, no HTTP, measured in the former Docker server image on 4 pinned cores, ms per forward pass:
 
 | Where / threads | batch 1 | batch 16 | batch 64 |
 |---|---:|---:|---:|
@@ -103,7 +102,7 @@ A batch of 4 costs about as much as 4 single passes (9.9 ms vs 2.7 ms), and more
 
 - **Single run per configuration,** with no repeats or confidence intervals.
 - **Closed-loop load understates tail latency** under overload (coordinated omission). An open-loop, fixed-arrival-rate mode would show it better.
-- **Not a real network.** Docker Desktop runs Linux in a VM on macOS, and client and server share one machine and its memory bandwidth. The cpusets map to VM vCPUs, not physical P/E cores.
+- **Client and server share the machine.** They run on the same host over loopback, so they compete for cores and memory bandwidth, and macOS has no way to pin processes to cores. The client-CPU column shows when the client itself saturates, but not when it slows the server down.
 
 ## Quick Start
 
@@ -111,16 +110,14 @@ A batch of 4 costs about as much as 4 single passes (9.9 ms vs 2.7 ms), and more
 # Install deps + train model (one-time)
 uv sync && make train
 
-# Build and start servers
-make build && make up
-
-# Isolated benchmarks (fresh container per server, client in Docker on its own cores)
+# Benchmarks (each run starts and stops its own server process)
 make bench-all                                   # all benches → results/all.html
 make compare                                     # concurrency sweep → results/concurrency.html
-make bench-docker BENCH=latency SERVERS="grpc fastapi_batched"   # subset
+make bench BENCH=latency SERVER=fastapi_batched  # one bench / one server → results/latency.html
 
-# Quick run from the host against running servers (shares CPUs -- not for comparisons)
-make up && make bench BENCH=latency SERVER=fastapi && make down
+# Run a server by hand, then bench it without --spawn
+make serve-fastapi_batched
+uv run python runner.py --bench latency --server fastapi_batched
 ```
 
 ## Project Structure
@@ -128,10 +125,9 @@ make up && make bench BENCH=latency SERVER=fastapi && make down
 ```
 model/          Model definition + training script
 servers/        Server implementations (one directory per server)
-benches/        Benchmark suite (latency, throughput, concurrency) + client Dockerfile
-compose/        Docker Compose files per server + bench.yml (client container)
+benches/        Benchmark suite (latency, throughput, concurrency) + server spawner
 results/        Bench output (git-ignored)
 runner.py       CLI benchmark runner
 report.py       Results → table/JSON/HTML
-config.yaml     Server URLs + benchmark parameters
+config.yaml     Server URLs + start commands + benchmark parameters
 ```

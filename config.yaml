@@ -1,26 +1,26 @@
-# url        -- used with `--target host`   (client on the host, via published ports)
-# docker_url -- used with `--target docker` (client container on the compose network)
+# url -- where the bench client connects
+# cmd -- how `runner.py --spawn` starts the server (run with the current Python)
 servers:
   fastapi:
-    url: "http://localhost:8001"
-    docker_url: "http://fastapi:8000"
+    url: "http://127.0.0.1:8001"
+    cmd: [servers/fastapi/app.py, --host, 127.0.0.1, --port, "8001"]
     protocol: http
   grpc:
-    url: "localhost:8002"
-    docker_url: "grpc:50051"
+    url: "127.0.0.1:8002"
+    cmd: [servers/grpc/server.py, --host, 127.0.0.1, --port, "8002"]
     protocol: grpc
   fastapi_queue:
-    url: "http://localhost:8003"
-    docker_url: "http://fastapi_queue:8000"
+    url: "http://127.0.0.1:8003"
+    cmd: [servers/fastapi_queue/app.py, --host, 127.0.0.1, --port, "8003"]
     protocol: http
     pattern: queue
   fastapi_msgpack:
-    url: "http://localhost:8004"
-    docker_url: "http://fastapi_msgpack:8000"
+    url: "http://127.0.0.1:8004"
+    cmd: [servers/fastapi_msgpack/app.py, --host, 127.0.0.1, --port, "8004"]
     protocol: msgpack
   fastapi_batched:
-    url: "http://localhost:8006"
-    docker_url: "http://fastapi_batched:8000"
+    url: "http://127.0.0.1:8006"
+    cmd: [servers/fastapi_batched/app.py, --host, 127.0.0.1, --port, "8006"]
     protocol: http
 
 client:

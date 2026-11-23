@@ -1,5 +1,7 @@
 """Vessel track predictor -- shared PyTorch model definition."""
 
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
@@ -7,6 +9,8 @@ HISTORY_STEPS = 30  # 5 min at 10-sec intervals
 HISTORY_FEATURES = 5  # lat, lon, speed, course_sin, course_cos
 FUTURE_STEPS = 15  # 15 min at 1-min intervals
 FUTURE_FEATURES = 2  # lat, lon
+
+WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "model.pt"
 
 INPUT_SIZE = HISTORY_STEPS * HISTORY_FEATURES  # 150
 OUTPUT_SIZE = FUTURE_STEPS * FUTURE_FEATURES  # 30

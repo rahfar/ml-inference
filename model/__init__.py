@@ -7,6 +7,7 @@ from model.predictor import (
     HISTORY_STEPS,
     INPUT_SIZE,
     OUTPUT_SIZE,
+    WEIGHTS_PATH,
     VesselTrackPredictor,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "HISTORY_STEPS",
     "INPUT_SIZE",
     "OUTPUT_SIZE",
+    "WEIGHTS_PATH",
     "VesselTrackPredictor",
 ]

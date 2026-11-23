@@ -5,20 +5,14 @@ Single RPC: Predict(PredictRequest) -> PredictResponse
 
 import concurrent.futures
 import uuid
-from pathlib import Path
 
 import grpc
 import numpy as np
 import torch
 
-from model import HISTORY_FEATURES, HISTORY_STEPS, VesselTrackPredictor
+from model import HISTORY_FEATURES, HISTORY_STEPS, WEIGHTS_PATH, VesselTrackPredictor
 from servers.grpc import inference_pb2, inference_pb2_grpc
 
-_DOCKER_WEIGHTS = Path("/app/weights/model.pt")
-_LOCAL_WEIGHTS = (
-    Path(__file__).resolve().parent.parent.parent / "model" / "weights" / "model.pt"
-)
-WEIGHTS = _DOCKER_WEIGHTS if _DOCKER_WEIGHTS.exists() else _LOCAL_WEIGHTS
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 _model: VesselTrackPredictor | None = None
@@ -29,7 +23,7 @@ def get_model() -> VesselTrackPredictor:
     if _model is None:
         _model = VesselTrackPredictor().to(DEVICE)
         _model.load_state_dict(
-            torch.load(WEIGHTS, weights_only=True, map_location=DEVICE)
+            torch.load(WEIGHTS_PATH, weights_only=True, map_location=DEVICE)
         )
         _model.eval()
     return _model

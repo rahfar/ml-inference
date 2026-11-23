@@ -3,19 +3,21 @@
 Usage:
     python runner.py --bench latency --server fastapi
     python runner.py --bench concurrency --server all --output html --out report.html
-    python runner.py --bench all --server grpc --target docker   # inside the bench container
+    python runner.py --bench all --server all --spawn   # start/stop each server itself
 
 Progress goes to stderr; the rendered report goes to stdout (or --out).
 """
 
 import argparse
 import sys
+from contextlib import nullcontext
 
 import yaml
 
 from benches.base import CLIENT_CPU_WARN_PCT, BenchResult
 from benches.concurrency_bench import ConcurrencyBench
 from benches.latency_bench import LatencyBench
+from benches.server_proc import spawned
 from benches.throughput_bench import ThroughputBench
 from report import render
 
@@ -39,10 +41,9 @@ def parse_args():
     p.add_argument("--bench", choices=[*BENCH_CLASSES, "all"], default="latency")
     p.add_argument("--server", choices=[*SERVER_NAMES, "all"], default="fastapi")
     p.add_argument(
-        "--target",
-        choices=["host", "docker"],
-        default="host",
-        help="host: use published ports (url); docker: use service names (docker_url)",
+        "--spawn",
+        action="store_true",
+        help="Start a fresh server process (config `cmd`) for every bench run",
     )
     p.add_argument("--output", choices=["table", "json", "html"], default="table")
     p.add_argument("--out", help="Write the report to this file instead of stdout")
@@ -80,14 +81,17 @@ def log(msg: str = "") -> None:
 
 
 def run_all(
-    bench_names: list[str], server_names: list[str], config: dict, target: str
+    bench_names: list[str], server_names: list[str], config: dict, spawn: bool
 ) -> list[BenchResult]:
     results: list[BenchResult] = []
     for bench_name in bench_names:
         for server_name in server_names:
             log(f"\n{'=' * 60}\n  {bench_name} -- {server_name}\n{'=' * 60}")
-            bench = BENCH_CLASSES[bench_name](server_name, config, target=target)
-            for r in bench.run():
+            bench = BENCH_CLASSES[bench_name](server_name, config)
+            server_cfg = config["servers"][server_name]
+            with spawned(server_name, server_cfg) if spawn else nullcontext():
+                bench_results = bench.run()
+            for r in bench_results:
                 results.append(r)
                 warn = (
                     "  <- client-bound"
@@ -113,7 +117,7 @@ def main():
     bench_names = list(BENCH_CLASSES) if args.bench == "all" else [args.bench]
     server_names = SERVER_NAMES if args.server == "all" else [args.server]
 
-    results = run_all(bench_names, server_names, config, args.target)
+    results = run_all(bench_names, server_names, config, args.spawn)
     output = render(results, fmt=args.output)
     if args.out:
         with open(args.out, "w") as f:

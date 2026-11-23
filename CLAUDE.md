@@ -21,7 +21,7 @@ ML Inference Bench — benchmark and compare three PyTorch serving strategies fo
 
 ```
 model/
-  predictor.py          # VesselTrackPredictor + dimension constants
+  predictor.py          # VesselTrackPredictor, dimension constants, WEIGHTS_PATH
   train.py              # Synthetic data generation + training
   weights/model.pt      # Saved weights (git-ignored)
 servers/
@@ -32,23 +32,20 @@ servers/
   fastapi_batched/app.py # Dynamic batching (asyncio.Queue + Future, 1 inference thread)
 benches/
   base.py               # Protocol clients, multi-process load runner, BenchResult
-  Dockerfile            # Load-generator image (no torch)
+  server_proc.py        # Start/stop a server subprocess per bench run (--spawn)
   latency_bench.py      # Single-user P50/P95/P99
   throughput_bench.py   # Max RPS under sustained load
   concurrency_bench.py  # Latency vs concurrent users curve
-compose/
-  compose.<server>.yml  # One file per server (cpuset SERVER_CPUS, default 0-3)
-  bench.yml             # Bench client container (cpuset CLIENT_CPUS, default 4-9)
-runner.py               # CLI bench runner (--target host|docker)
+runner.py               # CLI bench runner
 report.py               # Results → table/JSON/HTML; CLI merges JSON files
-results/                # Bench output (git-ignored)
-config.yaml             # Server URLs, bench defaults
+config.yaml             # Server URLs, start commands, bench defaults
+results/                # Bench output + server logs (git-ignored)
 Makefile                # Developer shortcuts
 ```
 
 ## Commands
 
-**Package manager:** `uv`
+**Package manager:** `uv`. Everything runs locally (no Docker).
 
 ```bash
 # Install deps (runtime + dev group: grpcio-tools, ruff, ty)
@@ -60,20 +57,14 @@ make train
 # Regenerate gRPC stubs
 make proto
 
-# Docker workflow
-make build          # build all server images
-make up             # start all servers (waits for healthy)
-make down           # tear down
+# Benchmarks -- each run starts a fresh server process (runner.py --spawn)
+make bench BENCH=latency SERVER=fastapi     # -> results/latency.html
+make compare                                # concurrency sweep -> results/concurrency.html
+make bench-all                              # full matrix -> results/all.html
 
-# Real numbers: isolated Docker run (fresh container per server, client on the
-# compose network with its own cpuset) -> results/<bench>-<server>.json + results/<bench>.html
-make bench-docker BENCH=latency                     # SERVERS="fastapi grpc" to subset
-make compare        # = bench-docker BENCH=concurrency
-make bench-all      # = bench-docker BENCH=all
-
-# Quick host run against already-running servers (client shares CPUs with servers)
-make bench BENCH=latency SERVER=fastapi
-uv run python runner.py --bench concurrency --server fastapi --concurrency 1 16 --duration 5
+# Run a server by hand, bench it without --spawn
+make serve-fastapi_batched
+uv run python runner.py --bench concurrency --server fastapi_batched --concurrency 1 16 --duration 5
 ```
 
 ## Architecture
@@ -83,9 +74,9 @@ uv run python runner.py --bench concurrency --server fastapi --concurrency 1 16 
 - `throughput_bench` — fixed concurrency, fixed duration
 - `concurrency_bench` — sweeps concurrency levels, each an independent warmup + measurement window
 
-All benches call `BaseBench.load()` → `run_load()`: closed-loop users spread over up to `client.processes` spawned processes (aiohttp/uvloop or grpc.aio), warmup window discarded, only requests starting in the measurement window count. Request bodies are pre-encoded per protocol; timing covers send → response decoded. Each result reports client CPU of the busiest client process — ≥80% means the run is client-bound.
+All benches call `BaseBench.load()` → `run_load()`: closed-loop users spread over up to `client.processes` spawned processes (aiohttp/uvloop or grpc.aio), warmup window discarded, only requests starting in the measurement window count. Request bodies are pre-encoded per protocol; timing covers send → response decoded. Each result reports client CPU of the busiest client process — ≥80% means the run is client-bound. Client and servers share the host's CPUs (no pinning on macOS).
 
 ### Config
-All server URLs (`url` for host, `docker_url` for the compose network), client processes and bench parameters live in `config.yaml`. The runner reads from there — no hardcoded URLs in bench code. Queue-pattern servers are marked with `pattern: queue`.
+All server URLs, start commands (`cmd`, used by `--spawn`), client processes and bench parameters live in `config.yaml`. The runner reads from there — no hardcoded URLs in bench code. Queue-pattern servers are marked with `pattern: queue`.
 
 No test framework is configured. Lint/format with `make style` (ruff).
