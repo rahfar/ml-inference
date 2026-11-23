@@ -3,7 +3,7 @@
 Usage:
     python runner.py --bench latency --server fastapi
     python runner.py --bench concurrency --server all --output html --out report.html
-    python runner.py --bench all --server go --target docker   # inside the bench container
+    python runner.py --bench all --server grpc --target docker   # inside the bench container
 
 Progress goes to stderr; the rendered report goes to stdout (or --out).
 """
@@ -30,7 +30,6 @@ SERVER_NAMES = [
     "grpc",
     "fastapi_queue",
     "fastapi_msgpack",
-    "go",
     "fastapi_batched",
 ]
 

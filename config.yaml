@@ -18,10 +18,6 @@ servers:
     url: "http://localhost:8004"
     docker_url: "http://fastapi_msgpack:8000"
     protocol: msgpack
-  go:
-    url: "http://localhost:8005"
-    docker_url: "http://go:8000"
-    protocol: http
   fastapi_batched:
     url: "http://localhost:8006"
     docker_url: "http://fastapi_batched:8000"

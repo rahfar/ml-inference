@@ -11,7 +11,6 @@ ML Inference Bench — benchmark and compare three PyTorch serving strategies fo
 | `grpc` | gRPC/HTTP2 | 8002 | Binary protocol, thread pool |
 | `fastapi_queue` | HTTP/REST | 8003 | Submit → poll via asyncio.Queue |
 | `fastapi_msgpack` | HTTP/MessagePack | 8004 | Inline inference, msgpack body |
-| `go` | HTTP/REST | 8005 | Go + ONNX Runtime |
 | `fastapi_batched` | HTTP/REST | 8006 | In-process dynamic batching (torch); env: WORKERS, TORCH_NUM_THREADS, MAX_BATCH, MAX_QUEUE, REQUEST_TIMEOUT_S |
 
 **Model:** LSTM encoder (hidden=256, layers=2) → linear decoder (~3 MB)
@@ -31,7 +30,6 @@ servers/
   fastapi_queue/app.py  # Queue-based server (submit/poll)
   fastapi_msgpack/app.py # MessagePack serialization
   fastapi_batched/app.py # Dynamic batching (asyncio.Queue + Future, 1 inference thread)
-  go/main.go            # Go + ONNX Runtime
 benches/
   base.py               # Protocol clients, multi-process load runner, BenchResult
   Dockerfile            # Load-generator image (no torch)
@@ -53,10 +51,10 @@ Makefile                # Developer shortcuts
 **Package manager:** `uv`
 
 ```bash
-# Install deps (runtime + dev group: grpcio-tools, onnxscript, ruff, ty)
+# Install deps (runtime + dev group: grpcio-tools, ruff, ty)
 uv sync
 
-# Train model (required before running servers; also exports model.onnx for Go)
+# Train model (required before running servers)
 make train
 
 # Regenerate gRPC stubs
@@ -69,7 +67,7 @@ make down           # tear down
 
 # Real numbers: isolated Docker run (fresh container per server, client on the
 # compose network with its own cpuset) -> results/<bench>-<server>.json + results/<bench>.html
-make bench-docker BENCH=latency                     # SERVERS="fastapi go" to subset
+make bench-docker BENCH=latency                     # SERVERS="fastapi grpc" to subset
 make compare        # = bench-docker BENCH=concurrency
 make bench-all      # = bench-docker BENCH=all
 

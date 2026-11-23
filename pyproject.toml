@@ -21,7 +21,6 @@ dependencies = [
 [dependency-groups]
 dev = [
     "grpcio-tools",  # make proto
-    "onnxscript",    # torch.onnx.export in model/train.py (for the Go server)
     "ruff>=0.15.8",
     "ty>=0.0.26",
 ]

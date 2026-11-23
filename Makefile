@@ -1,6 +1,6 @@
 BENCH   ?= latency
 SERVER  ?= all
-SERVERS ?= fastapi grpc fastapi_queue fastapi_msgpack go fastapi_batched
+SERVERS ?= fastapi grpc fastapi_queue fastapi_msgpack fastapi_batched
 
 COMPOSE_FILES := $(wildcard compose/compose.*.yml)
 COMPOSE_FLAGS := $(foreach f,$(COMPOSE_FILES),-f $(f))
