@@ -9,8 +9,8 @@ inline_loop        call predict() directly in the async handler; the event
 inline_threadpool  run predict() in the server's thread pool, as FastAPI does
                    for a sync `def` handler; many predictions run at once
 serial             queue -> one inference thread, one request at a time
-batched            queue -> one inference thread; everything waiting is
-                   concatenated into a single predict() call
+batched            queue -> `workers` inference threads (default 1); each
+                   one takes everything waiting as a single predict() call
 
 serial vs inline_threadpool shows the effect of limiting concurrency;
 batched vs serial shows the effect of batching on top of that.
@@ -41,8 +41,9 @@ def timed_predict(predict: PredictFn, x: np.ndarray) -> Result:
 
 
 class Strategy:
-    def __init__(self, predict: PredictFn):
+    def __init__(self, predict: PredictFn, workers: int = 1):
         self._predict = predict
+        self.workers = workers  # inference threads; only batched uses more than 1
 
     async def start(self) -> None: ...
 
@@ -78,26 +79,29 @@ class Serial(Strategy):
         )
 
 
-class Batched(Serial):
-    """Like serial, but each predict() call takes everything that is waiting.
+class Batched(Strategy):
+    """A queue and `workers` inference threads. Each predict() call takes
+    everything that is waiting, up to max_batch rows.
 
-    No added delay at low load: a request reaching an idle server runs at once,
-    as a batch of 1. Under load, requests pile up while a batch is running and
-    go together in the next one.
+    No added delay at low load: a request reaching an idle worker runs at once,
+    as a batch of 1. Under load, requests pile up while the workers are busy
+    and go together in the next batch. Several workers run batches in parallel,
+    each on its own cores.
     """
 
-    def __init__(self, predict: PredictFn, max_batch: int = 64):
-        super().__init__(predict)
+    def __init__(self, predict: PredictFn, workers: int = 1, max_batch: int = 64):
+        super().__init__(predict, workers)
         self.max_batch = max_batch  # rows per predict() call
 
     async def start(self) -> None:
-        await super().start()
+        self._executor = ThreadPoolExecutor(self.workers, thread_name_prefix="predict")
         self._queue: asyncio.Queue[tuple[np.ndarray, asyncio.Future]] = asyncio.Queue()
-        self._task = asyncio.create_task(self._run())
+        self._tasks = [asyncio.create_task(self._run()) for _ in range(self.workers)]
 
     async def stop(self) -> None:
-        self._task.cancel()
-        await super().stop()
+        for task in self._tasks:
+            task.cancel()
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     async def predict(self, x: np.ndarray) -> Result:
         future = asyncio.get_running_loop().create_future()

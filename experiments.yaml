@@ -7,6 +7,7 @@
 defaults:
   stack: fastapi+uvicorn  # web framework + HTTP server, see serving/app.py
   threads: 4  # threads per predict() call; match your performance cores
+  workers: 1  # inference threads, batched only (and the C++ server)
   samples: 1  # rows per request
   levels: [1, 4, 16, 64]  # concurrent users
   warmup_s: 2
@@ -38,3 +39,12 @@ experiments:
     vary:
       model: [noop, catboost, lstm]
       stack: [fastapi+uvicorn, starlette+uvicorn, fastapi+granian, starlette+granian, flask+gunicorn, flask+granian]
+
+  # 4. Python vs C++ (cpp/server.cpp), each at its best setup: batching, one
+  # torch thread per inference worker. workers=1 suits cheap models, 4 the LSTM.
+  cpp:
+    fixed: {codec: json, strategy: batched, threads: 1}
+    vary:
+      model: [noop, catboost, lstm]
+      stack: [fastapi+uvicorn, cpp]
+      workers: [1, 4]

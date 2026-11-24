@@ -7,6 +7,9 @@ stops the server, so no state carries over between variants.
     uv run python -m bench.run strategy
     uv run python -m bench.run codec --duration 3 --levels 1 16     # quick look
 
+Variants with `stack: cpp` run the C++ server (cpp/, built with `make cpp`)
+instead of `python -m serving.app`; it takes model, codec, threads and workers.
+
 Writes results/<experiment>.json and prints the table (see bench/report.py).
 Server logs go to results/logs/.
 """
@@ -30,7 +33,9 @@ from bench.report import table
 PORT = 8000
 URL = f"http://127.0.0.1:{PORT}"
 RESULTS = Path("results")
-SERVER_SETTINGS = ("stack", "model", "strategy", "codec", "threads")
+SERVER_SETTINGS = ("stack", "model", "strategy", "codec", "threads", "workers")
+CPP_SERVER = Path("cpp/build/server")
+CPP_SETTINGS = ("model", "codec", "threads", "workers")
 
 
 def variants(exp: dict) -> list[dict]:
@@ -50,12 +55,21 @@ def _healthy() -> bool:
         return False
 
 
+def server_command(settings: dict) -> list[str]:
+    if settings["stack"] == "cpp":
+        if not CPP_SERVER.exists():
+            raise RuntimeError(f"{CPP_SERVER} not found: run `make cpp` first")
+        args = [f"--{k}={settings[k]}" for k in CPP_SETTINGS]
+        return [str(CPP_SERVER), f"--port={PORT}", *args]
+    args = [f"--{k}={settings[k]}" for k in SERVER_SETTINGS]
+    return [sys.executable, "-m", "serving.app", f"--port={PORT}", *args]
+
+
 @contextmanager
 def server(settings: dict, log_path: Path):
     if _healthy():
         raise RuntimeError(f"something is already serving {URL}; stop it first")
-    cmd = [sys.executable, "-m", "serving.app", f"--port={PORT}"]
-    cmd += [f"--{k}={settings[k]}" for k in SERVER_SETTINGS]
+    cmd = server_command(settings)
     with open(log_path, "w") as log:
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
         try:

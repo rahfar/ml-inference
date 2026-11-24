@@ -1,6 +1,6 @@
 # ML Inference Bench
 
-**Question:** what is the most efficient way to put an HTTP API in front of an ML model, within one Python process?
+**Question:** what is the most efficient way to put an HTTP API in front of an ML model, within one Python process? A separate C++ server (`cpp/`) shows how much of the cost is Python itself.
 
 The project separates the things that can matter and measures one at a time:
 
@@ -10,6 +10,7 @@ The project separates the things that can matter and measures one at a time:
 | **Wire format:** how the array travels | `json`, `msgpack`, `protobuf`, `raw` float32 bytes | `serving/codecs.py` |
 | **Model cost:** how expensive one prediction is | `lstm` (PyTorch, ~0.6 ms per call), `catboost` (~0.1 ms per call), `noop` (no work: the serving overhead alone) | `models/` |
 | **Web stack:** framework + HTTP server | FastAPI or Starlette (async, ASGI) on uvicorn or granian; Flask (sync, WSGI) on gunicorn or granian | `serving/app.py` |
+| **Python vs C++:** the same server without the interpreter | Drogon + libtorch + CatBoost's C library, batching on N workers | `cpp/` |
 
 All models take the same input and give the same output: a 5-minute vessel track (30 steps × 5 features = 150 floats) in, a 15-minute forecast (15 × 2 = 30 floats) out.
 
@@ -29,20 +30,22 @@ Defined in `experiments.yaml`:
 1. **`strategy`**: every strategy × every model, with JSON, at 1–64 concurrent users.
 2. **`codec`**: every codec × every model at 1, 32 and 512 samples per request, with the strategy fixed to `batched`.
 3. **`stack`**: every web stack × every model, with JSON and the strategy fixed to `inline_threadpool`, the only one a sync WSGI app can express.
+4. **`cpp`**: Python (FastAPI + uvicorn) vs the C++ server × every model, both batching on 1 or 4 inference workers with 1 torch thread each, with JSON.
 
 Each variant gets a fresh server process. Load is closed-loop (each virtual user sends its next request when the last one returns), spread over several client processes. Each level is a warmup, then a fixed measurement window. The server reports where it spent each request's time (`decode` / `wait` / `predict` / `encode`), and the results include those means. They also include the client's own CPU use, which flags runs where the client rather than the server was the bottleneck.
 
 ## Results
 
-**Setup:** Apple M5 (4 performance + 6 efficiency cores), macOS, Python 3.14.3, torch 2.15.0, CatBoost 1.2.10, 4 threads per `predict()` call. Experiments 1 and 2 run FastAPI 0.165 on uvicorn 0.54 (uvloop + httptools); experiment 3 adds Starlette 1.10, Flask 3.1.3, granian 2.8.9 and gunicorn 27.0.1. Closed-loop load from 4 client processes, 2 s warmup and 10 s measured per level, single runs (expect roughly ±10%). The busiest client process never went above 44% of a core, so the numbers measure the server.
+**Setup:** Apple M5 (4 performance + 6 efficiency cores), macOS, Python 3.14.3, torch 2.15.0, CatBoost 1.2.10, 4 threads per `predict()` call. Experiments 1 and 2 run FastAPI 0.165 on uvicorn 0.54 (uvloop + httptools); experiment 3 adds Starlette 1.10, Flask 3.1.3, granian 2.8.9 and gunicorn 27.0.1. Experiment 4 uses 1 thread per call, and the C++ server is built with Apple clang 21, Drogon 1.9.14, simdjson 5.2.0, libtorch 2.15.0 (from the same wheel) and libcatboostmodel 1.2.10. Closed-loop load from 4 client processes, 2 s warmup and 10 s measured per level, single runs (expect roughly ±10%). In experiments 1–3 the busiest client process never went above 44% of a core, so the numbers measure the server. In experiment 4 the C++ server outruns the client on cheap models (see there).
 
 ### The short answer
 
 **It depends on how expensive one prediction is, so profile the model first** (`make profile`).
 
-- **Expensive model** (the LSTM, ~0.6 ms per call): get `predict()` off the event loop, using a thread pool or a batching queue. The wire format doesn't matter unless payloads are large.
+- **Expensive model** (the LSTM, ~0.6 ms per call): get `predict()` off the event loop. Best is a batching queue with several inference workers and 1 torch thread each (2× a thread pool at 64 users); a thread pool is the simple alternative. The wire format doesn't matter unless payloads are large.
 - **Cheap model** (CatBoost, ~0.1 ms per call, mostly fixed overhead): the cost of each request dominates, so do fewer, bigger `predict()` calls. Batch on the server (`batched`: 2.3× throughput), use a binary format, and accept many samples per request. The last one is the biggest lever: 31× more samples/s at 512 samples per request than at 1.
 - **Web stack:** any async stack (FastAPI or Starlette, on uvicorn or granian) is fine, and so is Flask on granian. With a real model they're within ~10% of each other. Avoid gunicorn's `gthread` worker: it caps a single process at ~2,800 RPS and halves the LSTM's throughput. Prefer async because it lets you batch, not because it's faster per request.
+- **Python vs C++:** with the LSTM, an optimized C++ server running the same kernels is only 13–30% faster. With CatBoost or no model it's 5× faster or more, because Python's ~0.15 ms per request costs more than the model. Python CatBoost's own wrapper takes 84 µs per call; the C API takes 3 µs.
 
 ### The models
 
@@ -108,7 +111,23 @@ JSON, 1 sample per request. `noop` returns zeros, so its row is the ceiling of t
 - **Every thread hop costs something.** At the `noop` ceiling, handing work to a thread pool costs about 25% (12.1k vs 16.0k RPS at 64 users).
 - **The LSTM scales with threads; CatBoost doesn't.** torch releases the GIL, so `inline_threadpool` runs LSTM predictions in parallel: 3,540 RPS at 4 users vs 1,757 for `serial` (whose throughput is simply 1 / 0.57 ms). CatBoost on the thread pool stays at ~5.7k: concurrent calls contend, and each one slows from 0.11 to 0.65 ms.
 - **Batching wins where calls are cheap.** CatBoost on `batched` reaches 12,896 RPS at 64 users, 2.3× any other strategy, with a P99 of 6.6 ms instead of 13–22 ms. Average batches are 9 rows at 16 users and 31 at 64.
-- **For the LSTM on this machine, batching only pays off at high load.** At 4 users the average batch of 2.5 rows saves nothing, because a batch of 4 costs almost 4 single calls. At 16 users, parallel threads beat one batching thread (3,948 vs 2,544 RPS). At 64 users they're even (4,371 vs 4,108 RPS, same P99). Batching on several inference threads would probably beat both, but isn't implemented.
+- **For the LSTM, one batching thread only pays off at high load.** At 4 users the average batch of 2.5 rows saves nothing, because a batch of 4 costs almost 4 single calls. At 16 users, parallel threads beat one batching thread (3,948 vs 2,544 RPS). At 64 users they're even (4,371 vs 4,108 RPS, same P99). See the correction below: with several inference threads, batching wins.
+
+**Correction, found after these runs: batching lost for the LSTM because it had only one inference thread.**
+- **torch's own threads barely parallelize this LSTM.** One call with 4 torch threads keeps only 1–2 cores busy, and is no faster than with 1 thread up to batch 64.
+- **So `batched` effectively ran on one core,** while the thread pool ran up to 40 predictions across every core.
+
+With 4 inference threads pulling from the same queue (`--workers 4`) and 1 torch thread each, `batched` matches or beats the thread pool at every load. Measured separately with the same bench:
+
+| LSTM, requests/s | users 1 | users 4 | users 16 | users 64 |
+|---|---:|---:|---:|---:|
+| `inline_threadpool` (1 torch thread) | 1,172 | 3,590 | 3,941 | 4,109 |
+| `batched`, 1 worker × 4 torch threads (the table above) | 1,174 | 1,546 | 2,480 | 4,307 |
+| `batched`, 4 workers × 1 torch thread | 1,170 | **3,762** | **4,728** | **7,960** |
+
+- **At 64 users the tail drops too,** from 22 to 14.5 ms P99.
+- **For CatBoost, one worker was already right.** More workers only split the queue into smaller batches (12.3k vs 12.9k RPS at 64 users).
+- **The rule:** use enough inference workers to keep up with the requests. That's one for a cheap model, and about one per performance core for an expensive one. Keep 1 torch thread per worker.
 
 <details>
 <summary>Full table with the server-side time breakdown</summary>
@@ -268,6 +287,75 @@ Strategy fixed to `inline_threadpool`: in every stack, `predict()` runs in one o
 - **uvicorn vs granian is close to even under load.** On ASGI, granian is slower at 1 user (3.4–4.3k vs 5.1–5.3k RPS on `noop`; 6–8% slower with CatBoost and the LSTM) and level or slightly faster at 64 users.
 - **With a real model, the stack matters much less than the strategy.** Across the five non-gunicorn stacks, CatBoost lands at 5.7–6.3k RPS and the LSTM at 3.8–4.2k at 64 users. Switching CatBoost from this thread-pool strategy to `batched` (experiment 1) gave 12.9k. Batching needs an async server, so that's the real argument for async: it makes batching easy. Raw speed isn't.
 
+### 4. Python vs C++
+
+`cpp/server.cpp` is a separate C++ server with the same API, models and timing headers, measured with the same load generator. It's built to be as fast as possible:
+- **HTTP:** Drogon, an async framework with one event loop per I/O thread (2 threads).
+- **LSTM:** libtorch from the same torch wheel, loading a TorchScript export. That means the same ATen kernels as Python.
+- **CatBoost:** CatBoost's own C evaluation library.
+- **JSON:** simdjson.
+- **Build:** `-O3 -mcpu=native -flto`.
+
+Both servers use the batching setup from the correction above: N inference workers, 1 torch thread each. JSON, 1 sample per request. Details in `cpp/README.md`.
+
+**Model-only cost** (`make profile` vs `cpp/build/server --profile`, 1 thread, ms per call):
+
+| Batch | `lstm` Python | `lstm` C++ | `catboost` Python | `catboost` C++ |
+|---:|---:|---:|---:|---:|
+| 1 | 0.573 | 0.554 | 0.084 | **0.003** |
+| 4 | 2.040 | 2.022 | 0.082 | 0.011 |
+| 16 | 3.569 | 3.530 | 0.109 | 0.027 |
+| 64 | 9.946 | 9.886 | 0.194 | 0.088 |
+| 256 | 36.697 | 36.527 | 0.557 | 0.334 |
+
+**Throughput (requests/s)**
+
+| model | server | workers | users 1 | users 4 | users 16 | users 64 |
+|---|---|---|---:|---:|---:|---:|
+| noop | Python (FastAPI + uvicorn) | 1 | 4,732 | 10,205 | 13,842 | 14,917 |
+| noop | Python (FastAPI + uvicorn) | 4 | 4,766 | 9,866 | 14,001 | 14,417 |
+| noop | C++ | 1 | 14,085 | 37,395 | 68,582 | 79,667 |
+| noop | C++ | 4 | 14,504 | 37,060 | 67,602 | 78,292 |
+| catboost | Python (FastAPI + uvicorn) | 1 | 2,704 | 6,628 | 10,238 | 12,836 |
+| catboost | Python (FastAPI + uvicorn) | 4 | 2,753 | 5,366 | 8,830 | 12,055 |
+| catboost | C++ | 1 | 12,843 | 35,090 | 62,352 | 73,387 |
+| catboost | C++ | 4 | 12,540 | 34,848 | 63,757 | 78,920 |
+| lstm | Python (FastAPI + uvicorn) | 1 | 1,171 | 1,559 | 3,116 | 4,747 |
+| lstm | Python (FastAPI + uvicorn) | 4 | 1,129 | 3,758 | 4,740 | 8,028 |
+| lstm | C++ | 1 | 1,479 | 1,648 | 3,218 | 5,497 |
+| lstm | C++ | 4 | 1,476 | 4,362 | 5,353 | 10,449 |
+
+**P99 latency (ms)**
+
+| model | server | workers | users 1 | users 4 | users 16 | users 64 |
+|---|---|---|---:|---:|---:|---:|
+| noop | Python (FastAPI + uvicorn) | 1 | 0.24 | 0.48 | 1.42 | 7.42 |
+| noop | Python (FastAPI + uvicorn) | 4 | 0.23 | 0.46 | 1.37 | 5.26 |
+| noop | C++ | 1 | 0.13 | 0.17 | 0.60 | 2.29 |
+| noop | C++ | 4 | 0.08 | 0.17 | 0.60 | 2.31 |
+| catboost | Python (FastAPI + uvicorn) | 1 | 0.39 | 0.64 | 3.72 | 6.74 |
+| catboost | Python (FastAPI + uvicorn) | 4 | 0.39 | 1.04 | 2.37 | 10.49 |
+| catboost | C++ | 1 | 0.09 | 0.17 | 0.58 | 3.03 |
+| catboost | C++ | 4 | 0.09 | 0.18 | 0.59 | 2.29 |
+| lstm | Python (FastAPI + uvicorn) | 1 | 0.88 | 2.70 | 5.84 | 21.86 |
+| lstm | Python (FastAPI + uvicorn) | 4 | 1.95 | 1.23 | 4.48 | 14.19 |
+| lstm | C++ | 1 | 0.70 | 2.48 | 5.11 | 12.02 |
+| lstm | C++ | 4 | 0.70 | 2.11 | 8.53 | 12.45 |
+
+**C++ client-bound levels.** At 16 and 64 users, the C++ `noop` and `catboost` rows are **client-bound**: the Python load generator's processes are at 91–98% CPU. So those numbers are lower bounds on what the server can do. With 6 client processes the same server reached 87k RPS on `noop`, and with 8 it dropped again, because client and server had run out of cores. The Python rows and the LSTM rows used at most 30% client CPU.
+
+- **Python costs ~0.15 ms per request before any model runs.** With `noop` at 1 user, Python does 4.7k RPS (P50 0.21 ms) and C++ 14.1k (P50 0.07 ms). Most of C++'s 0.07 ms is the Python client itself: the server reports ~0.01 ms of its own time per request.
+- **Cheap model: C++ is 4.7× faster at 1 user and at least 5–6× under load.** CatBoost does 12.8k vs 2.7k RPS at 1 user, and at least 73–79k vs 12.8k at 64 users.
+  - About a third of the 1-user gap (0.1 of 0.29 ms) is CatBoost's own Python wrapper: 84 µs per call, against **3 µs** for the same model through the C API. The wrapper costs more than the trees do.
+  - Python's batching hides that cost under load (30 rows per call at 64 users). The C++ server barely needs to batch (2–11 rows).
+- **Expensive model: C++ is 13–30% faster.** The LSTM runs the same kernels, and `predict()` takes the same ~5.0 ms per ~16-row batch in both servers at 64 users. C++ wins only on per-request overhead and queueing:
+  - 1,476 vs 1,129 RPS at 1 user (P50 0.68 vs 0.85 ms).
+  - 10,449 vs 8,028 at 64 users, with a P99 of 12.5 vs 14.2 ms.
+- **One C++ weak spot: the LSTM tail at 4–16 users.** With 4 workers the C++ P99 is higher than Python's (2.1 vs 1.2 ms at 4 users, 8.5 vs 4.5 ms at 16), although its median is lower. I haven't investigated this, and it's a single run. A worker scheduled on an efficiency core would explain it.
+- **When C++ pays off: it depends on the per-request overhead relative to the model's cost.**
+  - **Expensive model (milliseconds per call):** Python with batching and several workers gets within 25% of an optimized C++ server.
+  - **Cheap model (microseconds per call):** Python's ~0.15 ms overhead per request dominates, and C++ is 5× faster or more. Within Python, the remedy is fewer, bigger requests (experiment 2).
+
 ## Usage
 
 ```bash
@@ -278,6 +366,8 @@ make bench EXP=strategy             # -> results/strategy.json + table
 make bench EXP=codec
 make serve ARGS="--strategy serial --codec raw"   # one server by hand, port 8000
 make serve ARGS="--stack flask+gunicorn --strategy inline_threadpool"
+make cpp                            # C++ server -> cpp/build/server (brew install drogon simdjson)
+make bench EXP=cpp                  # Python vs C++
 ```
 
 ## Layout
@@ -287,12 +377,13 @@ models/        data.py (synthetic tracks), lstm.py, boosting.py (CatBoost), noop
 serving/       app.py (framework adapters + server launch), handler.py (decode -> predict -> encode),
                strategies.py, codecs.py, tensor.proto
 bench/         load.py (load generator), run.py (runs an experiment), report.py
+cpp/           server.cpp (the C++ server), export_lstm.py (TorchScript export), Makefile
 experiments.yaml
 ```
 
 ## Limitations
 
-- **Client and server share one machine** and talk over loopback. The client-CPU column shows when the client saturates, but not when it slows the server down.
+- **Client and server share one machine** and talk over loopback. The client-CPU column shows when the client saturates, but not when it slows the server down. The Python load generator tops out around 80k RPS, below the C++ server's capacity on cheap models.
 - **Closed-loop load understates tail latency** under overload. An open-loop, fixed-arrival-rate mode would show it better.
 - **Single runs** without repeats; expect roughly ±10% between runs. A few P99 cells are single-run outliers (e.g. codec: JSON at 32 samples, 16 users).
 - **One machine with performance and efficiency cores.** macOS decides where threads run, which may favour or penalise thread-heavy strategies.

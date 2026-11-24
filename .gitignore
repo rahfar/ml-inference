@@ -21,3 +21,5 @@ models/weights/
 .DS_Store
 results/
 catboost_info/
+cpp/build/
+cpp/third_party/

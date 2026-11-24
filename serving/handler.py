@@ -7,6 +7,7 @@ granian, gunicorn) can build the app from a factory with no arguments:
     SERVING_STRATEGY  see serving/strategies.py
     SERVING_CODEC     see serving/codecs.py
     SERVING_THREADS   threads per predict() call
+    SERVING_WORKERS   inference threads (batched only)
 
 Every reply reports where the server spent its time, in milliseconds:
 
@@ -40,9 +41,11 @@ class Reply:
 
 
 class Handler:
-    def __init__(self, model: str, strategy: str, codec: str, threads: int):
+    def __init__(
+        self, model: str, strategy: str, codec: str, threads: int, workers: int
+    ):
         self.model = models.load(model, threads)
-        self.strategy = STRATEGIES[strategy](self.model.predict)
+        self.strategy = STRATEGIES[strategy](self.model.predict, workers)
         self.codec = CODECS[codec]
 
     @classmethod
@@ -52,6 +55,7 @@ class Handler:
             strategy=os.environ["SERVING_STRATEGY"],
             codec=os.environ["SERVING_CODEC"],
             threads=int(os.environ["SERVING_THREADS"]),
+            workers=int(os.environ["SERVING_WORKERS"]),
         )
 
     @asynccontextmanager

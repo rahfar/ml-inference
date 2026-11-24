@@ -13,6 +13,9 @@ serve:            ## run one server by hand, e.g. make serve ARGS="--strategy se
 bench:            ## run one experiment from experiments.yaml, e.g. make bench EXP=codec
 	uv run python -m bench.run $(EXP)
 
+cpp:              ## build the C++ server (cpp/), see cpp/README.md
+	$(MAKE) -C cpp
+
 proto:            ## regenerate serving/tensor_pb2.py
 	uv run python -m grpc_tools.protoc -I serving --python_out=serving --pyi_out=serving serving/tensor.proto
 
@@ -25,4 +28,4 @@ lint:             ## check only, changes nothing: ruff lint + format, ty types
 	uv run ruff format --check .
 	uv run ty check
 
-.PHONY: train profile serve bench proto style lint
+.PHONY: train profile serve bench cpp proto style lint

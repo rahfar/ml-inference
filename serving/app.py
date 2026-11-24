@@ -145,6 +145,7 @@ def main() -> None:
     p.add_argument("--strategy", choices=STRATEGIES, default="batched")
     p.add_argument("--codec", choices=CODECS, default="json")
     p.add_argument("--threads", type=int, default=4, help="threads per predict() call")
+    p.add_argument("--workers", type=int, default=1, help="inference threads (batched)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     args = p.parse_args()
@@ -152,12 +153,15 @@ def main() -> None:
     factory, server = STACKS[args.stack]
     if factory in WSGI_APPS and args.strategy != "inline_threadpool":
         p.error(f"{args.stack} is WSGI: only --strategy inline_threadpool applies")
+    if args.workers != 1 and args.strategy != "batched":
+        p.error("--workers applies to --strategy batched only")
 
     os.environ.update(
         SERVING_MODEL=args.model,
         SERVING_STRATEGY=args.strategy,
         SERVING_CODEC=args.codec,
         SERVING_THREADS=str(args.threads),
+        SERVING_WORKERS=str(args.workers),
     )
     cmd = [sys.executable, "-m", *server_command(factory, server, args.host, args.port)]
     os.execv(sys.executable, cmd)
