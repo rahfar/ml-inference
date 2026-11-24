@@ -9,6 +9,7 @@ The project separates the things that can matter and measures one at a time:
 | **Execution strategy:** where and when `predict()` runs | `inline_loop`, `inline_threadpool`, `serial`, `batched` | `serving/strategies.py` |
 | **Wire format:** how the array travels | `json`, `msgpack`, `protobuf`, `raw` float32 bytes | `serving/codecs.py` |
 | **Model cost:** how expensive one prediction is | `lstm` (PyTorch, ~0.6 ms per call), `catboost` (~0.1 ms per call), `noop` (no work: the serving overhead alone) | `models/` |
+| **Web stack:** framework + HTTP server | FastAPI or Starlette (async, ASGI) on uvicorn or granian; Flask (sync, WSGI) on gunicorn or granian | `serving/app.py` |
 
 All models take the same input and give the same output: a 5-minute vessel track (30 steps × 5 features = 150 floats) in, a 15-minute forecast (15 × 2 = 30 floats) out.
 
@@ -27,12 +28,13 @@ Defined in `experiments.yaml`:
 
 1. **`strategy`**: every strategy × every model, with JSON, at 1–64 concurrent users.
 2. **`codec`**: every codec × every model at 1, 32 and 512 samples per request, with the strategy fixed to `batched`.
+3. **`stack`**: every web stack × every model, with JSON and the strategy fixed to `inline_threadpool`, the only one a sync WSGI app can express.
 
 Each variant gets a fresh server process. Load is closed-loop (each virtual user sends its next request when the last one returns), spread over several client processes. Each level is a warmup, then a fixed measurement window. The server reports where it spent each request's time (`decode` / `wait` / `predict` / `encode`), and the results include those means. They also include the client's own CPU use, which flags runs where the client rather than the server was the bottleneck.
 
 ## Results
 
-**Setup:** Apple M5 (4 performance + 6 efficiency cores), macOS, Python 3.14.3, torch 2.15.0, CatBoost 1.2.10, FastAPI 0.165 on uvicorn 0.54 (uvloop + httptools), 4 threads per `predict()` call. Closed-loop load from 4 client processes, 2 s warmup and 10 s measured per level, single runs (expect roughly ±10%). The busiest client process never went above 44% of a core, so the numbers measure the server.
+**Setup:** Apple M5 (4 performance + 6 efficiency cores), macOS, Python 3.14.3, torch 2.15.0, CatBoost 1.2.10, 4 threads per `predict()` call. Experiments 1 and 2 run FastAPI 0.165 on uvicorn 0.54 (uvloop + httptools); experiment 3 adds Starlette 1.10, Flask 3.1.3, granian 2.8.9 and gunicorn 27.0.1. Closed-loop load from 4 client processes, 2 s warmup and 10 s measured per level, single runs (expect roughly ±10%). The busiest client process never went above 44% of a core, so the numbers measure the server.
 
 ### The short answer
 
@@ -40,6 +42,7 @@ Each variant gets a fresh server process. Load is closed-loop (each virtual user
 
 - **Expensive model** (the LSTM, ~0.6 ms per call): get `predict()` off the event loop, using a thread pool or a batching queue. The wire format doesn't matter unless payloads are large.
 - **Cheap model** (CatBoost, ~0.1 ms per call, mostly fixed overhead): the cost of each request dominates, so do fewer, bigger `predict()` calls. Batch on the server (`batched`: 2.3× throughput), use a binary format, and accept many samples per request. The last one is the biggest lever: 31× more samples/s at 512 samples per request than at 1.
+- **Web stack:** any async stack (FastAPI or Starlette, on uvicorn or granian) is fine, and so is Flask on granian. With a real model they're within ~10% of each other. Avoid gunicorn's `gthread` worker: it caps a single process at ~2,800 RPS and halves the LSTM's throughput. Prefer async because it lets you batch, not because it's faster per request.
 
 ### The models
 
@@ -210,6 +213,61 @@ Strategy fixed to `batched`, the overall winner of experiment 1. Samples per req
 - **Sending many samples per request is the biggest lever for a cheap model.** CatBoost with raw goes from 14.7k samples/s at 1 per request to 457k at 512 per request (31×). The LSTM goes from 2.5k to 11.5k (4.6×), as the profile predicts.
 - **P99 with large payloads is queueing, not the codec.** At 512 samples and 16 users, each request waits behind ~15 others, so the LSTM's median is already 710–810 ms. That's the throughput limit showing as latency.
 
+### 3. Web stack: framework + HTTP server
+
+Strategy fixed to `inline_threadpool`: in every stack, `predict()` runs in one of 40 request threads. That's the only strategy a sync WSGI app can express. JSON, 1 sample per request.
+
+**Throughput (requests/s)**
+
+| model | stack | users 1 | users 4 | users 16 | users 64 |
+|---|---|---:|---:|---:|---:|
+| noop | fastapi+uvicorn | 5,074 | 9,878 | 11,371 | 12,089 |
+| noop | starlette+uvicorn | 5,312 | 11,883 | 13,178 | 14,771 |
+| noop | fastapi+granian | 3,441 | 8,220 | 10,857 | 12,426 |
+| noop | starlette+granian | 4,252 | 9,977 | 12,838 | 15,584 |
+| noop | flask+gunicorn | 2,857 | 2,703 | 2,774 | 2,812 |
+| noop | flask+granian | 6,725 | 12,636 | 12,094 | 15,541 |
+| catboost | fastapi+uvicorn | 2,688 | 4,676 | 5,466 | 5,785 |
+| catboost | starlette+uvicorn | 2,820 | 5,127 | 5,714 | 6,263 |
+| catboost | fastapi+granian | 2,467 | 4,457 | 5,266 | 5,748 |
+| catboost | starlette+granian | 2,594 | 4,899 | 5,734 | 6,313 |
+| catboost | flask+gunicorn | 2,127 | 2,111 | 2,166 | 2,167 |
+| catboost | flask+granian | 3,253 | 5,663 | 5,629 | 5,757 |
+| lstm | fastapi+uvicorn | 1,172 | 3,593 | 3,899 | 4,065 |
+| lstm | starlette+uvicorn | 1,195 | 3,752 | 4,084 | 4,240 |
+| lstm | fastapi+granian | 1,104 | 3,492 | 3,891 | 4,038 |
+| lstm | starlette+granian | 1,124 | 3,666 | 4,193 | 4,145 |
+| lstm | flask+gunicorn | 1,060 | 2,043 | 1,986 | 1,997 |
+| lstm | flask+granian | 1,253 | 4,047 | 3,949 | 3,773 |
+
+**P99 latency (ms)**
+
+| model | stack | users 1 | users 4 | users 16 | users 64 |
+|---|---|---:|---:|---:|---:|
+| noop | fastapi+uvicorn | 0.23 | 0.49 | 2.06 | 6.23 |
+| noop | starlette+uvicorn | 0.21 | 0.40 | 2.82 | 5.24 |
+| noop | fastapi+granian | 0.32 | 0.60 | 2.16 | 8.33 |
+| noop | starlette+granian | 0.25 | 0.50 | 3.08 | 6.42 |
+| noop | flask+gunicorn | 0.38 | 2.45 | 9.61 | 29.03 |
+| noop | flask+granian | 0.17 | 1.88 | 6.29 | 74.51 |
+| catboost | fastapi+uvicorn | 0.40 | 1.13 | 4.01 | 13.02 |
+| catboost | starlette+uvicorn | 0.38 | 1.04 | 6.47 | 12.16 |
+| catboost | fastapi+granian | 0.44 | 1.15 | 4.43 | 17.32 |
+| catboost | starlette+granian | 0.42 | 1.05 | 4.09 | 15.34 |
+| catboost | flask+gunicorn | 0.50 | 3.07 | 12.17 | 38.38 |
+| catboost | flask+granian | 0.34 | 1.03 | 5.58 | 37.69 |
+| lstm | fastapi+uvicorn | 0.88 | 1.41 | 6.72 | 22.11 |
+| lstm | starlette+uvicorn | 0.87 | 1.34 | 6.50 | 39.15 |
+| lstm | fastapi+granian | 0.94 | 1.40 | 6.23 | 25.33 |
+| lstm | starlette+granian | 0.92 | 1.30 | 5.79 | 48.75 |
+| lstm | flask+gunicorn | 0.98 | 2.83 | 13.15 | 46.35 |
+| lstm | flask+granian | 0.83 | 1.19 | 9.20 | 39.88 |
+
+- **gunicorn's thread worker is the bottleneck, not WSGI.** Flask on gunicorn (`gthread`) is stuck at ~2,800 RPS even with `noop`, and halves the LSTM's throughput (~2,000 vs ~4,000 RPS). The same Flask app on granian matches the async stacks, and is the fastest of all at 1 user (6,725 RPS on `noop`, 1,253 on the LSTM): granian parses HTTP in Rust and hands each request straight to a Python thread, without an event loop in between. Its weak spot is the tail at 64 users (P99 74.5 ms on `noop`), where 40 Python threads fight over the GIL.
+- **FastAPI costs 15–20% over bare Starlette at the ceiling** (`noop` at 64 users: 12.1k vs 14.8k on uvicorn, 12.4k vs 15.6k on granian), but only 5–10% with CatBoost and 2–4% with the LSTM. The request handler here is the same in both, so that's FastAPI's own routing and request wrapping.
+- **uvicorn vs granian is close to even under load.** On ASGI, granian is slower at 1 user (3.4–4.3k vs 5.1–5.3k RPS on `noop`; 6–8% slower with CatBoost and the LSTM) and level or slightly faster at 64 users.
+- **With a real model, the stack matters much less than the strategy.** Across the five non-gunicorn stacks, CatBoost lands at 5.7–6.3k RPS and the LSTM at 3.8–4.2k at 64 users. Switching CatBoost from this thread-pool strategy to `batched` (experiment 1) gave 12.9k. Batching needs an async server, so that's the real argument for async: it makes batching easy. Raw speed isn't.
+
 ## Usage
 
 ```bash
@@ -219,13 +277,15 @@ make profile MODEL=lstm             # model-only cost vs batch size
 make bench EXP=strategy             # -> results/strategy.json + table
 make bench EXP=codec
 make serve ARGS="--strategy serial --codec raw"   # one server by hand, port 8000
+make serve ARGS="--stack flask+gunicorn --strategy inline_threadpool"
 ```
 
 ## Layout
 
 ```
 models/        data.py (synthetic tracks), lstm.py, boosting.py (CatBoost), noop.py, train.py, profile.py
-serving/       app.py (the server), strategies.py, codecs.py, tensor.proto
+serving/       app.py (framework adapters + server launch), handler.py (decode -> predict -> encode),
+               strategies.py, codecs.py, tensor.proto
 bench/         load.py (load generator), run.py (runs an experiment), report.py
 experiments.yaml
 ```

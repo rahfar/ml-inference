@@ -1,85 +1,146 @@
-"""The only server. Model, strategy and codec are chosen on the command line.
+"""The server: one handler (serving/handler.py) behind a choice of web stacks.
 
     uv run python -m serving.app --model lstm --strategy batched --codec json
+    uv run python -m serving.app --stack flask+gunicorn --model catboost
 
 POST /predict   body: (n, 150) float32 in the chosen codec -> (n, 30) float32
 GET  /health
 
-Every response reports where the server spent its time, in milliseconds:
+A stack is a framework (FastAPI, Starlette: async/ASGI; Flask: sync/WSGI) run
+by an HTTP server (uvicorn: ASGI; gunicorn: WSGI; granian: both). The CLI puts
+the settings in environment variables and replaces itself with the server.
 
-    Server-Timing: decode;dur=0.08, wait;dur=0.51, predict;dur=2.90, encode;dur=0.03
-    X-Batch-Size: 12        (rows in the predict() call that served the request)
-
-`wait` is the time between decoding and the start of predict(): the queue or
-thread pool. It can't see time spent before the handler runs, e.g. while
-`inline_loop` blocks the event loop.
+WSGI apps handle each request in one of the server's threads, which is exactly
+the inline_threadpool strategy, so that's the only strategy they support.
 """
 
 import argparse
-import time
-from contextlib import asynccontextmanager
+import os
+import sys
 
-import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
+from fastapi import Response as FastAPIResponse
+from flask import Flask
+from flask import Response as FlaskResponse
+from flask import request as flask_request
+from starlette.applications import Starlette
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
 
 import models
-from models.data import INPUT_SIZE
 from serving.codecs import CODECS
+from serving.handler import Handler
 from serving.strategies import STRATEGIES
 
+# Threads for request handling, everywhere: Starlette's default thread pool
+# (used by inline_threadpool) has 40, so the WSGI servers get 40 too.
+REQUEST_THREADS = 40
 
-def create_app(model: str, strategy: str, codec: str, threads: int) -> FastAPI:
-    predictor = models.load(model, threads)
-    runner = STRATEGIES[strategy](predictor.predict)
-    wire = CODECS[codec]
 
-    @asynccontextmanager
-    async def lifespan(_: FastAPI):
-        await runner.start()
-        yield
-        await runner.stop()
-
-    app = FastAPI(lifespan=lifespan)
+def fastapi_app() -> FastAPI:
+    handler = Handler.from_env()
+    app = FastAPI(lifespan=handler.lifespan)
 
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
 
     @app.post("/predict")
-    async def predict(request: Request) -> Response:
-        body = await request.body()
-        t0 = time.perf_counter()
-        try:
-            x = wire.decode(body).reshape(-1, INPUT_SIZE)
-        except Exception as e:  # noqa: BLE001 -- any decode failure is a bad request
-            return Response(f"cannot decode body: {e}", status_code=400)
-        if len(x) == 0:
-            return Response("empty input", status_code=400)
-        t1 = time.perf_counter()
-        result = await runner.predict(x)
-        t2 = time.perf_counter()
-        out = wire.encode(result.y)
-        t3 = time.perf_counter()
-
-        phases = {
-            "decode": t1 - t0,
-            "wait": (t2 - t1) - result.predict_s,
-            "predict": result.predict_s,
-            "encode": t3 - t2,
-        }
-        headers = {
-            "Server-Timing": ", ".join(
-                f"{k};dur={v * 1e3:.3f}" for k, v in phases.items()
-            ),
-            "X-Batch-Size": str(result.batch_size),
-        }
-        return Response(out, media_type=wire.content_type, headers=headers)
+    async def predict(request: Request) -> FastAPIResponse:
+        reply = await handler.handle(await request.body())
+        return FastAPIResponse(
+            reply.body, reply.status, reply.headers, reply.content_type
+        )
 
     return app
 
 
+def starlette_app() -> Starlette:
+    handler = Handler.from_env()
+
+    async def health(_: StarletteRequest) -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
+    async def predict(request: StarletteRequest) -> Response:
+        reply = await handler.handle(await request.body())
+        return Response(reply.body, reply.status, reply.headers, reply.content_type)
+
+    routes = [Route("/health", health), Route("/predict", predict, methods=["POST"])]
+    return Starlette(routes=routes, lifespan=handler.lifespan)
+
+
+def flask_app() -> Flask:
+    handler = Handler.from_env()
+    app = Flask(__name__)
+
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "ok"}
+
+    @app.post("/predict")
+    def predict() -> FlaskResponse:
+        reply = handler.handle_sync(flask_request.get_data())
+        return FlaskResponse(
+            reply.body, reply.status, reply.headers, content_type=reply.content_type
+        )
+
+    return app
+
+
+STACKS = {  # stack -> (app factory, server)
+    "fastapi+uvicorn": ("fastapi_app", "uvicorn"),
+    "fastapi+granian": ("fastapi_app", "granian"),
+    "starlette+uvicorn": ("starlette_app", "uvicorn"),
+    "starlette+granian": ("starlette_app", "granian"),
+    "flask+gunicorn": ("flask_app", "gunicorn"),
+    "flask+granian": ("flask_app", "granian"),
+}
+WSGI_APPS = {"flask_app"}
+
+
+def server_command(factory: str, server: str, host: str, port: int) -> list[str]:
+    """The command line that runs `factory` on `server`, one process."""
+    target = f"serving.app:{factory}"
+    wsgi = factory in WSGI_APPS
+    if server == "uvicorn":
+        return [
+            "uvicorn",
+            target,
+            "--factory",
+            f"--host={host}",
+            f"--port={port}",
+            "--log-level=warning",
+        ]
+    if server == "granian":
+        cmd = [
+            "granian",
+            target,
+            "--factory",
+            f"--interface={'wsgi' if wsgi else 'asgi'}",
+            f"--host={host}",
+            f"--port={port}",
+            "--workers=1",
+            "--log-level=warning",
+        ]
+        return cmd + ([f"--blocking-threads={REQUEST_THREADS}"] if wsgi else [])
+    if server == "gunicorn":
+        return [
+            "gunicorn",
+            f"{target}()",
+            "--worker-class=gthread",
+            "--workers=1",
+            f"--threads={REQUEST_THREADS}",
+            f"--bind={host}:{port}",
+            "--graceful-timeout=5",
+            "--log-level=warning",
+        ]
+    raise ValueError(f"unknown server {server!r}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Inference server")
+    p.add_argument("--stack", choices=STACKS, default="fastapi+uvicorn")
     p.add_argument("--model", choices=models.MODELS, default="lstm")
     p.add_argument("--strategy", choices=STRATEGIES, default="batched")
     p.add_argument("--codec", choices=CODECS, default="json")
@@ -88,8 +149,18 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8000)
     args = p.parse_args()
 
-    app = create_app(args.model, args.strategy, args.codec, args.threads)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    factory, server = STACKS[args.stack]
+    if factory in WSGI_APPS and args.strategy != "inline_threadpool":
+        p.error(f"{args.stack} is WSGI: only --strategy inline_threadpool applies")
+
+    os.environ.update(
+        SERVING_MODEL=args.model,
+        SERVING_STRATEGY=args.strategy,
+        SERVING_CODEC=args.codec,
+        SERVING_THREADS=str(args.threads),
+    )
+    cmd = [sys.executable, "-m", *server_command(factory, server, args.host, args.port)]
+    os.execv(sys.executable, cmd)
 
 
 if __name__ == "__main__":

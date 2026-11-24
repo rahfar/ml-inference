@@ -14,6 +14,9 @@ dependencies = [
     "aiohttp",
     "pyyaml",
     "catboost>=1.2.10",
+    "granian>=2.8.9",
+    "gunicorn>=27.0.1",
+    "flask>=3.1.3",
 ]
 
 [dependency-groups]
@@ -41,4 +44,8 @@ torch = [
 ]
 
 [tool.ruff]
-extend-exclude = ["serving/tensor_pb2.py"]
+extend-exclude = ["serving/tensor_pb2.py", "serving/tensor_pb2.pyi"]  # generated
+
+[tool.ruff.lint]
+# defaults (pyflakes, pycodestyle errors) + imports, bugbear, pyupgrade, simplify, ruff
+extend-select = ["I", "B", "UP", "SIM", "RUF"]

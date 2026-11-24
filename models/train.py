@@ -86,7 +86,9 @@ def main() -> None:
     x, y = make_dataset(N_TRAIN + N_VAL)
     inputs, targets = to_relative(x), to_offsets(x, y)
     split = (inputs[:N_TRAIN], targets[:N_TRAIN], inputs[N_TRAIN:], targets[N_TRAIN:])
-    print(f"  baseline  last position  val MSE {mse(0, split[3]):.5f}")
+    t_val = split[3]
+    baseline = mse(np.zeros_like(t_val), t_val)  # offset 0: stay at the last position
+    print(f"  baseline  last position  val MSE {baseline:.5f}")
     for name in args.models or TRAINERS:
         TRAINERS[name](*split)
 

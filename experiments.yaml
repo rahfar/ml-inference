@@ -5,6 +5,7 @@
 #   uv run python -m bench.run <experiment>
 
 defaults:
+  stack: fastapi+uvicorn  # web framework + HTTP server, see serving/app.py
   threads: 4  # threads per predict() call; match your performance cores
   samples: 1  # rows per request
   levels: [1, 4, 16, 64]  # concurrent users
@@ -28,3 +29,12 @@ experiments:
       codec: [json, msgpack, protobuf, raw]
       samples: [1, 32, 512]
     levels: [1, 16]
+
+  # 3. Web framework + HTTP server. Strategy fixed to inline_threadpool: the
+  #    only one a sync (WSGI) app can express. Each request then runs in one
+  #    of the server's threads, like a sync FastAPI handler.
+  stack:
+    fixed: {strategy: inline_threadpool, codec: json}
+    vary:
+      model: [noop, catboost, lstm]
+      stack: [fastapi+uvicorn, starlette+uvicorn, fastapi+granian, starlette+granian, flask+gunicorn, flask+granian]

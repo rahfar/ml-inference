@@ -77,7 +77,7 @@ def pivot(
     cols = list(dict.fromkeys(c for row in cells.values() for c in row))
     names = {"concurrency": "users"}
     col_label = lambda c: ", ".join(
-        f"{names.get(k, k)} {v}" for k, v in zip(columns, c)
+        f"{names.get(k, k)} {v}" for k, v in zip(columns, c, strict=True)
     )
     lines = [
         "| " + " | ".join([*row_keys, *map(col_label, cols)]) + " |",

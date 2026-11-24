@@ -30,14 +30,15 @@ from bench.report import table
 PORT = 8000
 URL = f"http://127.0.0.1:{PORT}"
 RESULTS = Path("results")
-SERVER_SETTINGS = ("model", "strategy", "codec", "threads")
+SERVER_SETTINGS = ("stack", "model", "strategy", "codec", "threads")
 
 
 def variants(exp: dict) -> list[dict]:
     """{'vary': {'a': [1, 2], 'b': ['x']}} -> [{'a': 1, 'b': 'x'}, {'a': 2, 'b': 'x'}]"""
     names = list(exp["vary"])
     return [
-        dict(zip(names, values)) for values in itertools.product(*exp["vary"].values())
+        dict(zip(names, values, strict=True))
+        for values in itertools.product(*exp["vary"].values())
     ]
 
 
