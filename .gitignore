@@ -19,7 +19,7 @@ models/weights/
 
 # OS
 .DS_Store
-results/
+results/logs/
 catboost_info/
 cpp/build/
 cpp/third_party/

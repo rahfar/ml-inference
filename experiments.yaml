@@ -22,6 +22,20 @@ experiments:
       model: [noop, catboost, lstm]
       strategy: [inline_loop, inline_threadpool, serial, batched]
 
+  # 1b. Follow-up to 1: batched with several inference workers vs the thread
+  #     pool, each with 1 or 4 torch threads per predict() call.
+  batched_workers:
+    fixed: {codec: json, strategy: batched}
+    vary:
+      model: [catboost, lstm]
+      workers: [1, 4]
+      threads: [1, 4]
+  threadpool_ref:
+    fixed: {codec: json, strategy: inline_threadpool}
+    vary:
+      model: [catboost, lstm]
+      threads: [1, 4]
+
   # 2. Wire format, at growing payloads. Strategy fixed to the winner of 1.
   codec:
     fixed: {strategy: batched}

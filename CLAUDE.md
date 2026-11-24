@@ -21,7 +21,7 @@ serving/         app.py, handler.py, strategies.py, codecs.py, tensor.proto + te
 bench/           load.py (multi-process closed-loop client), run.py (experiment runner), report.py
 cpp/             server.cpp, export_lstm.py (-> models/weights/lstm.ts), Makefile; build/ + third_party/ git-ignored
 experiments.yaml experiments = fixed settings + `vary` lists (cartesian product = variants)
-results/         output + server logs (git-ignored)
+results/         <experiment>.json (bench output, tracked) + <experiment>.md (full tables + observations); logs/ git-ignored
 ```
 
 ## Commands
@@ -46,4 +46,5 @@ make lint                         # check only: ruff lint, ruff format --check, 
 - torch's thread count is per calling thread (OpenMP); `LSTMModel.predict` sets it in whichever thread runs it.
 - torch's intra-op threads barely speed up this LSTM (one call keeps ~1-2 cores busy); parallelism comes from several calls at once, so `batched` with `workers` ~ performance cores and `threads: 1` is the fast setup.
 - `bench.run` spawns a fresh server per variant on port 8000 and refuses to start if the port is already served.
+- README.md is the summary only (objective, methodology, short results with links). Exact numbers live in `results/*.md`, generated from `results/*.json` with `bench.report`; after a rerun, update both the .md tables and any README numbers.
 - No test framework. `make lint` must pass (ruff + ty); ruff skips the generated `serving/tensor_pb2.py(i)`.
